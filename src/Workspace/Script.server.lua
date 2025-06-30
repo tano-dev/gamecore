@@ -1,0 +1,1 @@
+wait(5) while task.wait(0.2) do local module = require(game.ServerStorage.Modules.ItemHandler) module.ItemIncrement(3,game.Players.tano_dev,5,false) end
