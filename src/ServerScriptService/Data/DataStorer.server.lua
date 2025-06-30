@@ -1,3 +1,6 @@
+print("Developing branch: DataStorer")
+-- This script is responsible for loading player data from the DataStore
+-- and initializing the player's profile with default values.
 local Players = game:GetService("Players")
 local RunService = game:GetService('RunService')
 local ProfileStore = require(game.ServerScriptService.Library.ProfileStore)
@@ -7,7 +10,6 @@ local ItemDictionaryHandler = require(game:GetService("ServerStorage"):WaitForCh
 local function DataStoreKey()
 	return RunService:IsStudio() and "Studio" or  "Live"
 end
-
 -- The PROFILE_TEMPLATE table is what new profile "Profile.Data" will default to:
 local PROFILE_TEMPLATE = {
 	MainLevel = 1,
