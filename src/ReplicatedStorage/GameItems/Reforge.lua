@@ -27,6 +27,33 @@ local Reforge = {
 				CritDamage = -9,
 			},
 		},
+		["Shiny"] = {
+			ID = 2,
+			Common = {
+				Damage = 1,
+				CritDamage = 3,
+			},
+			Uncommon = {
+				Damage = 2,
+				CritDamage = 4,
+			},
+			Rare = {
+				Damage = 4,
+				CritDamage = 5,
+			},
+			Epic = {
+				Damage = 7,
+				CritDamage = 6,
+			},
+			Legendary = {
+				Damage = 10,
+				CritDamage = 7,
+			},
+			Mythic = {
+				Damage = 15,
+				CritDamage = 9,
+			},
+		},
 	},
 	Armor = {
 		["Rough"] = {
