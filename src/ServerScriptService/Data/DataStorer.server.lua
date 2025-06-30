@@ -1,3 +1,6 @@
+print("Developing branch: DataStorer")
+-- This script is responsible for loading player data from the DataStore
+-- and initializing the player's profile with default values.
 local Players = game:GetService("Players")
 local RunService = game:GetService('RunService')
 local ProfileStore = require(game.ServerScriptService.Library.ProfileStore)
