@@ -24,6 +24,7 @@ Main APIs:
  		4-gem
  		0-remove status
 	
+Note: Updated to work with unified ItemDataStogare.lua system
 ]]
 --Usage 
 --[[
@@ -36,7 +37,6 @@ print(b)
 ]]
 local ItemDictionaryHandler = {}
 local ConverterPattern = "(%d+)%s?:%s?(%d+)"
-local NameOrIDConverter = require(game:GetService("ReplicatedStorage"):WaitForChild("Modules"):WaitForChild("NameOrIDConverter"))
 local CopyTable = require(game:GetService("ReplicatedStorage"):WaitForChild("Modules"):WaitForChild("CopyTable"))
 local Priority ={
 	ID = 1,
@@ -65,8 +65,7 @@ local Priority ={
 	NBT = 23,
 }
 --Formats
-local ItemData = require(game:GetService("ReplicatedStorage"):WaitForChild("GameItems"):WaitForChild("ItemData"))
-local ItemDataStogare = require(game:GetService("ReplicatedStorage"):WaitForChild("GameItems"):WaitForChild("ItemDataStogare"))
+local ItemData = require(game:GetService("ReplicatedStorage"):WaitForChild("GameItems"):WaitForChild("ItemDataStogare"))
 local EquipmentFormat = require(game:GetService("ReplicatedStorage"):WaitForChild("Format"):WaitForChild("EquipmentFormat"))
 local EquipmentData = require(game:GetService("ReplicatedStorage"):WaitForChild("Format"):WaitForChild("EquipmentData"))
 local StatsPriority = require(game:GetService("ReplicatedStorage"):WaitForChild("Format"):WaitForChild("StatsPriority"))
@@ -76,16 +75,22 @@ local Material_ConsumableData = require(game:GetService("ReplicatedStorage"):Wai
 
 
 function ItemDictionaryHandler.IDToName(ID:number)
-	local itemvalue = ItemData[ID]
-	return itemvalue.Name,itemvalue.ItemType,itemvalue.SubType
+	local itemvalue = ItemData.GetByID(ID)
+	if not itemvalue then
+		warn("[ItemDictionaryHandler]: Item with ID " .. tostring(ID) .. " not found")
+		return nil, nil, nil
+	end
+	return itemvalue.Name, itemvalue.ItemType, itemvalue.SubType
 end
---function ItemDictionaryHandler.NameToID(Name)
---	for i,v in pairs(ItemDataStogare) do
---		if i == Name then
---			return v.ID , v.ItemType, v.SubType
---		end
---	end
---end
+
+function ItemDictionaryHandler.NameToID(Name:string)
+	local itemvalue = ItemData.GetByName(Name)
+	if not itemvalue then
+		warn("[ItemDictionaryHandler]: Item with name '" .. tostring(Name) .. "' not found")
+		return nil, nil, nil
+	end
+	return itemvalue.ID, itemvalue.ItemType, itemvalue.SubType
+end
 
 
 --[[
@@ -103,6 +108,11 @@ nếu loại = 1 thì
 ]]
 function ItemDictionaryHandler.ItemToDictionary(Item)
 	local Name, Type = ItemDictionaryHandler.IDToName(Item.Value)
+	if not Name or not Type then
+		warn("[ItemDictionaryHandler]: ItemToDictionary failed - invalid item ID:", Item.Value)
+		return nil
+	end
+	
 	if Type == 1 then
 		local FormatDictionary = CopyTable.Copy(EquipmentFormat)
 		FormatDictionary.ID = Item.Value 
@@ -111,11 +121,11 @@ function ItemDictionaryHandler.ItemToDictionary(Item)
 			FormatDictionary[n] = v
 		end
 		--Get Children from copied format
-		for i,v in pairs(Item:GetChildren()) do
+		for _,v in pairs(Item:GetChildren()) do
 			if v.Name == "Upgrades" then
 				FormatDictionary.UpgradeAttemptUsed = v.Value
-				for n,v in pairs(v:GetAttributes()) do
-					FormatDictionary.Upgrades[n] = v
+				for n,attrValue in pairs(v:GetAttributes()) do
+					FormatDictionary.Upgrades[n] = attrValue
 				end
 			end
 			if v.Name == "Enchants" then
@@ -148,8 +158,14 @@ function ItemDictionaryHandler.ItemToDictionary(Item)
 end
 function ItemDictionaryHandler.DictionaryToItem(Dictionary,ItemParent)
 	local Name, Type = ItemDictionaryHandler.IDToName(Dictionary.ID)
+	if not Name or not Type then
+		warn("[ItemDictionaryHandler]: DictionaryToItem failed - invalid item ID:", Dictionary.ID)
+		return false, "Invalid item ID"
+	end
+	
 	--Setting Values
-	local NewItem = Instance.new("NumberValue",ItemParent)
+	local NewItem = Instance.new("NumberValue")
+	NewItem.Parent = ItemParent
 	NewItem.Name = Name
 	if Type == 1 then
 		--if ItemParent.Parent.Name ~= "Equipments" then
@@ -157,15 +173,18 @@ function ItemDictionaryHandler.DictionaryToItem(Dictionary,ItemParent)
 		--	return false, ("wrong type? 137 ItemDictionaryHandler")
 		--end
 		NewItem.Value = Dictionary.ID
-		local Enchants  = Instance.new("NumberValue",NewItem)
+		local Enchants  = Instance.new("NumberValue")
 		Enchants.Name = "Enchants"
 		Enchants.Value = tonumber(Dictionary.EnchantSlotUsed)
-		local Upgrades  = Instance.new("NumberValue",NewItem)
+		Enchants.Parent = NewItem
+		local Upgrades  = Instance.new("NumberValue")
 		Upgrades.Name = "Upgrades"
 		Upgrades.Value = tonumber(Dictionary.UpgradeAttemptUsed)
-		local Gems  = Instance.new("NumberValue",NewItem)
+		Upgrades.Parent = NewItem
+		local Gems  = Instance.new("NumberValue")
 		Gems.Name = "Gems"
 		Gems.Value = tonumber(Dictionary.GemSlotUsed)
+		Gems.Parent = NewItem
 		--Setting Attributes
 		NewItem:SetAttribute("CurrentSlot",Dictionary.CurrentSlot)
 		NewItem:SetAttribute("CustomLore",Dictionary.CustomLore)
@@ -211,6 +230,10 @@ function ItemDictionaryHandler.DictionaryToItem(Dictionary,ItemParent)
 end
 function ItemDictionaryHandler.DictionaryToData(Dictionary)
 	local Name, Type = ItemDictionaryHandler.IDToName(Dictionary.ID)
+	if not Name or not Type then
+		warn("[ItemDictionaryHandler]: DictionaryToData failed - invalid item ID:", Dictionary.ID)
+		return nil
+	end
 	if Type == 1 then
 		local NewData = CopyTable.Copy(EquipmentData)
 		for n,v in pairs(Dictionary) do
@@ -315,7 +338,7 @@ function ItemDictionaryHandler.DataToDictionary(Data)
 			end
 		end
 
-		local Str
+		local Str = ""
 		if type(Data[20]) then
 			if #Data[20] == 0 then
 				Str = ""
@@ -327,7 +350,6 @@ function ItemDictionaryHandler.DataToDictionary(Data)
 						Str = Str..":"..v
 					end
 				end
-			else Str = ""
 			end
 		end
 		NewDictionary.State = Str
@@ -395,7 +417,7 @@ function ItemDictionaryHandler.DataToItem(Player,Data)
 		Gems:SetAttribute("Slot1",Data[18][1])
 		Gems:SetAttribute("Slot2",Data[18][2])
 		Gems:SetAttribute("Slot3",Data[18][3])
-		local Str
+		local Str = ""
 		if type(Data[20]) then
 			if #Data[20] == 0 then
 				Str = ""
@@ -407,7 +429,6 @@ function ItemDictionaryHandler.DataToItem(Player,Data)
 						Str = Str..":"..v
 					end
 				end
-			else Str = ""
 			end
 		end
 		NewItem:SetAttribute("State",Str)
