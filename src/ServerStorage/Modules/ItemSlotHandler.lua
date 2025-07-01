@@ -58,54 +58,34 @@ local EquippedTab = {
 	"Chestplate",
 	"Boots",
 	"Tool",
-	Accessory = {
-		"Slot1",
-		"Slot2",
-		"Slot3",
-		"Slot4",
-		"Slot5",
-		"Slot6",
-		"Slot7",
-		"Slot8",
-		"Slot9",
-	}
+	"Accessory",
+	"Bow",
+	"Fishing",
 }
 
-local function getLowest(TableGiven) 
-	local low = nil
-	local index
-	for i, v in pairs(TableGiven) do
-		if typeof(v) == "string" then
-			v = tonumber(v)
-		end
-		if typeof(low) == "nil" then
-			low = v
-			index = i
-		end
-		if v < low then
-			low = v
-			index = i
+-- Utility functions to get the index and value of the lowest/highest element in a table
+local function getLowest(tbl)
+	local minIndex, minValue
+	for i, v in pairs(tbl) do
+		local num = tonumber(v)
+		if num ~= nil and (minValue == nil or num < minValue) then
+			minValue = num
+			minIndex = i
 		end
 	end
-	return index, low
+	return minIndex, minValue
 end
-local function getHighest(TableGiven)
-	local high = nil
-	local index
-	for i, v in pairs(TableGiven) do
-		if typeof(v) == "string" then
-			v = tonumber(v)
-		end
-		if typeof(high) == "nil" then
-			high = v
-			index = i
-		end
-		if v > high then
-			high = v
-			index = i
+
+local function getHighest(tbl)
+	local maxIndex, maxValue
+	for i, v in pairs(tbl) do
+		local num = tonumber(v)
+		if num ~= nil and (maxValue == nil or num > maxValue) then
+			maxValue = num
+			maxIndex = i
 		end
 	end
-	return index, high
+	return maxIndex, maxValue
 end
 --[[
 Mode 1 - ALL 2-Equipments 3-Consumable 4-Material 5-Equipped
