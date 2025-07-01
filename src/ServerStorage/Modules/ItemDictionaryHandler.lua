@@ -130,17 +130,17 @@ function ItemDictionaryHandler.ItemToDictionary(Item)
 			end
 			if v.Name == "Enchants" then
 				FormatDictionary.EnchantSlotUsed = v.Value
-				for n,v in pairs(v:GetAttributes()) do
+				for n,attrValue in pairs(v:GetAttributes()) do
 					--string convert
-					local EnchantID, Level = string.match(v,ConverterPattern)
+					local EnchantID, Level = string.match(attrValue,ConverterPattern)
 					FormatDictionary.Enchants[n]["ID"] = EnchantID
 					FormatDictionary.Enchants[n]["Level"] = Level
 				end
 			end
 			if v.Name == "Gems" then
 				FormatDictionary.GemSlotUsed = v.Value
-				for n,v in pairs(v:GetAttributes()) do
-					FormatDictionary.Gems[n]["ID"] = v
+				for n,attrValue in pairs(v:GetAttributes()) do
+					FormatDictionary.Gems[n]["ID"] = attrValue
 				end
 			end
 		end
@@ -277,7 +277,7 @@ function ItemDictionaryHandler.DictionaryToData(Dictionary)
 				if v == "" then
 					newtab = {}
 				else
-					for a,b in pairs(v:split(":")) do
+					for _,b in pairs(v:split(":")) do
 						table.insert(newtab,tonumber(b))
 					end
 				end
@@ -303,7 +303,7 @@ function ItemDictionaryHandler.DictionaryToData(Dictionary)
 	end
 end
 function ItemDictionaryHandler.DataToDictionary(Data)
-	local Name, Type = ItemDictionaryHandler.IDToName(Data[1])
+	local _, Type = ItemDictionaryHandler.IDToName(Data[1])
 	if Type == 1 then
 		local NewDictionary = CopyTable.Copy(EquipmentFormat)
 		NewDictionary.ID = Data[1]
@@ -329,7 +329,7 @@ function ItemDictionaryHandler.DataToDictionary(Data)
 		for i,v in pairs(Data[18]) do
 			NewDictionary.Gems["Slot"..i].ID = v
 		end
-		for a,b in pairs(Data[19]:split("-")) do
+		for _,b in pairs(Data[19]:split("-")) do
 			local c = b:split(":")
 			for e,f in pairs(StatsPriority) do
 				if tonumber(c[1]) == f then
@@ -343,7 +343,7 @@ function ItemDictionaryHandler.DataToDictionary(Data)
 			if #Data[20] == 0 then
 				Str = ""
 			elseif #Data[20] > 0 then
-				for i,v in pairs(Data[20]) do
+				for _,v in pairs(Data[20]) do
 					if Str == nil then
 						Str = v 
 					else
@@ -385,15 +385,19 @@ function ItemDictionaryHandler.DataToItem(Player,Data)
 		--	return false, ("wrong type? 137 ItemDictionaryHandler")
 		--end
 		NewItem.Value = Data[1]
-		local Enchants  = Instance.new("NumberValue",NewItem)
+		local Enchants  = Instance.new("NumberValue")
 		Enchants.Name = "Enchants"
 		Enchants.Value = tonumber(Data[11])
-		local Upgrades  = Instance.new("NumberValue",NewItem)
+		Enchants.Parent = NewItem
+		local Upgrades  = Instance.new("NumberValue")
 		Upgrades.Name = "Upgrades"
 		Upgrades.Value = tonumber(Data[9])
-		local Gems  = Instance.new("NumberValue",NewItem)
+		Upgrades.Parent = NewItem
+		local Gems  = Instance.new("NumberValue")
 		Gems.Name = "Gems"
 		Gems.Value = tonumber(Data[12])
+		Gems.Parent = NewItem
+
 		--Setting Attributes
 		NewItem:SetAttribute("CurrentSlot",Data[16])
 		NewItem:SetAttribute("CustomLore",Data[3])
@@ -422,7 +426,7 @@ function ItemDictionaryHandler.DataToItem(Player,Data)
 			if #Data[20] == 0 then
 				Str = ""
 			elseif #Data[20] > 0 then
-				for i,v in pairs(Data[20]) do
+				for _,v in pairs(Data[20]) do
 					if Str == nil then
 						Str = v 
 					else
@@ -438,7 +442,7 @@ function ItemDictionaryHandler.DataToItem(Player,Data)
 		--end
 		print(Data[19])
 		if Data[19] ~= "" then	
-			for index1,upgradeString in pairs(Data[19]:split("-")) do
+			for _,upgradeString in pairs(Data[19]:split("-")) do
 				local values = upgradeString:split(":")
 				--for e,f in pairs(StatsPriority) do
 				--	if tonumber(values[1]) == f then
@@ -510,7 +514,7 @@ function ItemDictionaryHandler.DataToItem(Player,Data)
 	end
 end
 function ItemDictionaryHandler.ItemToData(Item)
-	local Name, Type = ItemDictionaryHandler.IDToName(Item.Value)
+	local _, Type = ItemDictionaryHandler.IDToName(Item.Value)
 	if Type == 1 then
 		local FormatData= CopyTable.Copy(EquipmentData)
 		FormatData[1] = Item.Value 
@@ -548,7 +552,7 @@ function ItemDictionaryHandler.ItemToData(Item)
 		FormatData[19] = UpgradeString
 		local newtab = {}
 		if Item:GetAttribute("State") ~= "" then
-			for a,b in pairs(Item:GetAttribute("State"):split(":")) do
+			for _,b in pairs(Item:GetAttribute("State"):split(":")) do
 				table.insert(newtab,tonumber(b))
 			end
 		end
@@ -568,7 +572,7 @@ function ItemDictionaryHandler.ItemToData(Item)
 end
 function ItemDictionaryHandler.GetStats(Dictionary,Mode)
 	local Stats = {}
-	local ItemName,ItemType,ItemSubType = ItemDictionaryHandler.IDToName(Dictionary.ID)
+	local _,ItemType,ItemSubType = ItemDictionaryHandler.IDToName(Dictionary.ID)
 	if ItemType ~= 1 then return false, "Wrong type" end
 	if ItemSubType == "Pet" then return false, "Wrong type" end
 	--Stats["ID"] = Dictionary["ID"]
