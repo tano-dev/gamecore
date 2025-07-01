@@ -24,6 +24,7 @@ Main APIs:
  		4-gem
  		0-remove status
 	
+Note: Updated to work with unified ItemDataStogare.lua system
 ]]
 --Usage 
 --[[
@@ -36,9 +37,67 @@ print(b)
 ]]
 local ItemDictionaryHandler = {}
 local ConverterPattern = "(%d+)%s?:%s?(%d+)"
-local NameOrIDConverter = require(game:GetService("ReplicatedStorage"):WaitForChild("Modules"):WaitForChild("NameOrIDConverter"))
-local CopyTable = require(game:GetService("ReplicatedStorage"):WaitForChild("Modules"):WaitForChild("CopyTable"))
-local Priority ={
+-- Cache ReplicatedStorage reference
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- Module dependencies
+local CopyTable = require(ReplicatedStorage.Modules.CopyTable)
+
+-- Helper Functions
+local function createNumberValue(name, value, parent)
+	local numberValue = Instance.new("NumberValue")
+	numberValue.Name = name
+	numberValue.Value = value
+	numberValue.Parent = parent
+	return numberValue
+end
+
+local function setMultipleAttributes(instance, attributes)
+	for key, value in pairs(attributes) do
+		instance:SetAttribute(key, value)
+	end
+end
+
+local function getSlotParent(player, itemType, slotNumber)
+	local inventory = player:FindFirstChild("Inventory")
+	local equipped = inventory:FindFirstChild("Equipped")
+	local bank = player:FindFirstChild("Bank")
+	
+	if itemType == 1 then -- Equipment
+		if slotNumber >= 1 and slotNumber <= 25 then
+			return inventory.Equipments:FindFirstChild("Slot_" .. slotNumber)
+		elseif slotNumber == -1 then
+			return equipped.Main.Weapon
+		elseif slotNumber == -2 then
+			return equipped.Main.Offhand
+		elseif slotNumber == -3 then
+			return equipped.Main.Tool
+		elseif slotNumber == -4 then
+			return equipped.Main.Helmet
+		elseif slotNumber == -5 then
+			return equipped.Main.Chestplate
+		elseif slotNumber == -6 then
+			return equipped.Main.Boots
+		elseif slotNumber == -7 then
+			return equipped.Main.Pet
+		end
+	elseif itemType == 2 then -- Consumables
+		if slotNumber >= 1 and slotNumber <= 36 then
+			return inventory.Consumables:FindFirstChild("Slot_" .. slotNumber)
+		elseif slotNumber == -8 then
+			return equipped.Main.Aura
+		end
+	elseif itemType == 3 then -- Materials
+		if slotNumber >= 1 and slotNumber <= 36 then
+			return inventory.Materials:FindFirstChild("Slot_" .. slotNumber)
+		end
+	end
+	
+	return bank -- Default fallback
+end
+
+-- Constants - using constants instead of table lookups improves performance
+local Priority = {
 	ID = 1,
 	CustomName = 2,
 	CustomLore = 3,
@@ -64,28 +123,44 @@ local Priority ={
 	Aura = 22,
 	NBT = 23,
 }
---Formats
-local ItemData = require(game:GetService("ReplicatedStorage"):WaitForChild("GameItems"):WaitForChild("ItemData"))
-local ItemDataStogare = require(game:GetService("ReplicatedStorage"):WaitForChild("GameItems"):WaitForChild("ItemDataStogare"))
-local EquipmentFormat = require(game:GetService("ReplicatedStorage"):WaitForChild("Format"):WaitForChild("EquipmentFormat"))
-local EquipmentData = require(game:GetService("ReplicatedStorage"):WaitForChild("Format"):WaitForChild("EquipmentData"))
-local StatsPriority = require(game:GetService("ReplicatedStorage"):WaitForChild("Format"):WaitForChild("StatsPriority"))
-local StatsIndex = require(game:GetService("ReplicatedStorage"):WaitForChild("Format"):WaitForChild("StatsIndex"))
-local Material_ConsumableFormat = require(game:GetService("ReplicatedStorage"):WaitForChild("Format"):WaitForChild("Material_ConsumableFormat"))
-local Material_ConsumableData = require(game:GetService("ReplicatedStorage"):WaitForChild("Format"):WaitForChild("Material_ConsumableData"))
+
+-- Format modules
+local ItemData = require(ReplicatedStorage.GameItems.ItemDataStogare)
+local EquipmentFormat = require(ReplicatedStorage.Format.EquipmentFormat)
+local EquipmentData = require(ReplicatedStorage.Format.EquipmentData)
+local StatsPriority = require(ReplicatedStorage.Format.StatsPriority)
+local StatsIndex = require(ReplicatedStorage.Format.StatsIndex)
+local Material_ConsumableFormat = require(ReplicatedStorage.Format.Material_ConsumableFormat)
+local Material_ConsumableData = require(ReplicatedStorage.Format.Material_ConsumableData)
 
 
-function ItemDictionaryHandler.IDToName(ID:number)
-	local itemvalue = ItemData[ID]
-	return itemvalue.Name,itemvalue.ItemType,itemvalue.SubType
+function ItemDictionaryHandler.IDToName(ID: number): (string?, number?, string?)
+	if not ID or type(ID) ~= "number" then
+		warn("[ItemDictionaryHandler]: Invalid ID parameter - expected number, got " .. type(ID))
+		return nil, nil, nil
+	end
+	
+	local itemvalue = ItemData.GetByID(ID)
+	if not itemvalue then
+		warn("[ItemDictionaryHandler]: Item with ID " .. tostring(ID) .. " not found")
+		return nil, nil, nil
+	end
+	return itemvalue.Name, itemvalue.ItemType, itemvalue.SubType
 end
---function ItemDictionaryHandler.NameToID(Name)
---	for i,v in pairs(ItemDataStogare) do
---		if i == Name then
---			return v.ID , v.ItemType, v.SubType
---		end
---	end
---end
+
+function ItemDictionaryHandler.NameToID(Name: string): (number?, number?, string?)
+	if not Name or type(Name) ~= "string" then
+		warn("[ItemDictionaryHandler]: Invalid Name parameter - expected string, got " .. type(Name))
+		return nil, nil, nil
+	end
+	
+	local itemvalue = ItemData.GetByName(Name)
+	if not itemvalue then
+		warn("[ItemDictionaryHandler]: Item with name '" .. tostring(Name) .. "' not found")
+		return nil, nil, nil
+	end
+	return itemvalue.ID, itemvalue.ItemType, itemvalue.SubType
+end
 
 
 --[[
@@ -103,6 +178,11 @@ nếu loại = 1 thì
 ]]
 function ItemDictionaryHandler.ItemToDictionary(Item)
 	local Name, Type = ItemDictionaryHandler.IDToName(Item.Value)
+	if not Name or not Type then
+		warn("[ItemDictionaryHandler]: ItemToDictionary failed - invalid item ID:", Item.Value)
+		return nil
+	end
+	
 	if Type == 1 then
 		local FormatDictionary = CopyTable.Copy(EquipmentFormat)
 		FormatDictionary.ID = Item.Value 
@@ -111,26 +191,26 @@ function ItemDictionaryHandler.ItemToDictionary(Item)
 			FormatDictionary[n] = v
 		end
 		--Get Children from copied format
-		for i,v in pairs(Item:GetChildren()) do
+		for _,v in pairs(Item:GetChildren()) do
 			if v.Name == "Upgrades" then
 				FormatDictionary.UpgradeAttemptUsed = v.Value
-				for n,v in pairs(v:GetAttributes()) do
-					FormatDictionary.Upgrades[n] = v
+				for n,attrValue in pairs(v:GetAttributes()) do
+					FormatDictionary.Upgrades[n] = attrValue
 				end
 			end
 			if v.Name == "Enchants" then
 				FormatDictionary.EnchantSlotUsed = v.Value
-				for n,v in pairs(v:GetAttributes()) do
+				for n,attrValue in pairs(v:GetAttributes()) do
 					--string convert
-					local EnchantID, Level = string.match(v,ConverterPattern)
+					local EnchantID, Level = string.match(attrValue,ConverterPattern)
 					FormatDictionary.Enchants[n]["ID"] = EnchantID
 					FormatDictionary.Enchants[n]["Level"] = Level
 				end
 			end
 			if v.Name == "Gems" then
 				FormatDictionary.GemSlotUsed = v.Value
-				for n,v in pairs(v:GetAttributes()) do
-					FormatDictionary.Gems[n]["ID"] = v
+				for n,attrValue in pairs(v:GetAttributes()) do
+					FormatDictionary.Gems[n]["ID"] = attrValue
 				end
 			end
 		end
@@ -148,8 +228,14 @@ function ItemDictionaryHandler.ItemToDictionary(Item)
 end
 function ItemDictionaryHandler.DictionaryToItem(Dictionary,ItemParent)
 	local Name, Type = ItemDictionaryHandler.IDToName(Dictionary.ID)
+	if not Name or not Type then
+		warn("[ItemDictionaryHandler]: DictionaryToItem failed - invalid item ID:", Dictionary.ID)
+		return false, "Invalid item ID"
+	end
+	
 	--Setting Values
-	local NewItem = Instance.new("NumberValue",ItemParent)
+	local NewItem = Instance.new("NumberValue")
+	NewItem.Parent = ItemParent
 	NewItem.Name = Name
 	if Type == 1 then
 		--if ItemParent.Parent.Name ~= "Equipments" then
@@ -157,15 +243,18 @@ function ItemDictionaryHandler.DictionaryToItem(Dictionary,ItemParent)
 		--	return false, ("wrong type? 137 ItemDictionaryHandler")
 		--end
 		NewItem.Value = Dictionary.ID
-		local Enchants  = Instance.new("NumberValue",NewItem)
+		local Enchants  = Instance.new("NumberValue")
 		Enchants.Name = "Enchants"
 		Enchants.Value = tonumber(Dictionary.EnchantSlotUsed)
-		local Upgrades  = Instance.new("NumberValue",NewItem)
+		Enchants.Parent = NewItem
+		local Upgrades  = Instance.new("NumberValue")
 		Upgrades.Name = "Upgrades"
 		Upgrades.Value = tonumber(Dictionary.UpgradeAttemptUsed)
-		local Gems  = Instance.new("NumberValue",NewItem)
+		Upgrades.Parent = NewItem
+		local Gems  = Instance.new("NumberValue")
 		Gems.Name = "Gems"
 		Gems.Value = tonumber(Dictionary.GemSlotUsed)
+		Gems.Parent = NewItem
 		--Setting Attributes
 		NewItem:SetAttribute("CurrentSlot",Dictionary.CurrentSlot)
 		NewItem:SetAttribute("CustomLore",Dictionary.CustomLore)
@@ -211,6 +300,10 @@ function ItemDictionaryHandler.DictionaryToItem(Dictionary,ItemParent)
 end
 function ItemDictionaryHandler.DictionaryToData(Dictionary)
 	local Name, Type = ItemDictionaryHandler.IDToName(Dictionary.ID)
+	if not Name or not Type then
+		warn("[ItemDictionaryHandler]: DictionaryToData failed - invalid item ID:", Dictionary.ID)
+		return nil
+	end
 	if Type == 1 then
 		local NewData = CopyTable.Copy(EquipmentData)
 		for n,v in pairs(Dictionary) do
@@ -254,7 +347,7 @@ function ItemDictionaryHandler.DictionaryToData(Dictionary)
 				if v == "" then
 					newtab = {}
 				else
-					for a,b in pairs(v:split(":")) do
+					for _,b in pairs(v:split(":")) do
 						table.insert(newtab,tonumber(b))
 					end
 				end
@@ -280,7 +373,17 @@ function ItemDictionaryHandler.DictionaryToData(Dictionary)
 	end
 end
 function ItemDictionaryHandler.DataToDictionary(Data)
-	local Name, Type = ItemDictionaryHandler.IDToName(Data[1])
+	if not Data or type(Data) ~= "table" or not Data[1] then
+		warn("[ItemDictionaryHandler]: Invalid Data parameter for DataToDictionary")
+		return nil
+	end
+	
+	local _, Type = ItemDictionaryHandler.IDToName(Data[1])
+	if not Type then
+		warn("[ItemDictionaryHandler]: DataToDictionary failed - invalid item ID:", Data[1])
+		return nil
+	end
+	
 	if Type == 1 then
 		local NewDictionary = CopyTable.Copy(EquipmentFormat)
 		NewDictionary.ID = Data[1]
@@ -299,42 +402,53 @@ function ItemDictionaryHandler.DataToDictionary(Data)
 		NewDictionary.Owner = Data[14]
 		NewDictionary.Locked = Data[15]
 		NewDictionary.CurrentSlot = Data[16]
-		for i,v in pairs(Data[17]) do
-			NewDictionary.Enchants["Slot"..i].ID = v[1]
-			NewDictionary.Enchants["Slot"..i].Level = v[2]
+		
+		-- Process enchants
+		if Data[17] and type(Data[17]) == "table" then
+			for i, v in pairs(Data[17]) do
+				if NewDictionary.Enchants["Slot"..i] then
+					NewDictionary.Enchants["Slot"..i].ID = v[1]
+					NewDictionary.Enchants["Slot"..i].Level = v[2]
+				end
+			end
 		end
-		for i,v in pairs(Data[18]) do
-			NewDictionary.Gems["Slot"..i].ID = v
+		
+		-- Process gems
+		if Data[18] and type(Data[18]) == "table" then
+			for i, v in pairs(Data[18]) do
+				if NewDictionary.Gems["Slot"..i] then
+					NewDictionary.Gems["Slot"..i].ID = v
+				end
+			end
 		end
-		for a,b in pairs(Data[19]:split("-")) do
-			local c = b:split(":")
-			for e,f in pairs(StatsPriority) do
-				if tonumber(c[1]) == f then
-					NewDictionary.Upgrades[e] = c[2]
+		
+		-- Process upgrades
+		if Data[19] and Data[19] ~= "" then
+			for _, upgradeString in pairs(Data[19]:split("-")) do
+				local values = upgradeString:split(":")
+				if #values >= 2 then
+					for statName, priority in pairs(StatsPriority) do
+						if tonumber(values[1]) == priority then
+							NewDictionary.Upgrades[statName] = values[2]
+							break
+						end
+					end
 				end
 			end
 		end
 
-		local Str
-		if type(Data[20]) then
-			if #Data[20] == 0 then
-				Str = ""
-			elseif #Data[20] > 0 then
-				for i,v in pairs(Data[20]) do
-					if Str == nil then
-						Str = v 
-					else
-						Str = Str..":"..v
-					end
-				end
-			else Str = ""
-			end
+		-- Process state
+		local Str = ""
+		if Data[20] and type(Data[20]) == "table" and #Data[20] > 0 then
+			Str = table.concat(Data[20], ":")
 		end
 		NewDictionary.State = Str
+		
 		NewDictionary.Enlightment = Data[21]
 		NewDictionary.Aura = Data[22]
 		NewDictionary.NBT = Data[23]
 		return NewDictionary
+		
 	elseif Type == 2 or Type == 3 then
 		local NewDictionary = CopyTable.Copy(Material_ConsumableFormat)
 		NewDictionary["ID"] = tonumber(Data[1])
@@ -345,151 +459,94 @@ function ItemDictionaryHandler.DataToDictionary(Data)
 		return NewDictionary
 	end
 end
-function ItemDictionaryHandler.DataToItem(Player,Data)
-	local Bank = Player:FindFirstChild("Bank")
-	local Inventory = Player:FindFirstChild("Inventory")
-	local Equipments = Inventory:FindFirstChild("Equipments")
-	local Consumables = Inventory:FindFirstChild("Consumables")
-	local Materials = Inventory:FindFirstChild("Materials")
-	local Equipped = Inventory:FindFirstChild("Equipped")
+function ItemDictionaryHandler.DataToItem(Player, Data)
+	if not Player or not Data or type(Data) ~= "table" then
+		warn("[ItemDictionaryHandler]: Invalid parameters for DataToItem")
+		return
+	end
 	
 	local Name, Type = ItemDictionaryHandler.IDToName(Data[1])
-	--Setting Values
-	local NewItem = Instance.new("NumberValue")
-	NewItem.Name = Name
-	if Type == 1 then
-		--if ItemParent.Parent.Name ~= "Equipments" then
-		--	NewItem:Destroy()
-		--	return false, ("wrong type? 137 ItemDictionaryHandler")
-		--end
-		NewItem.Value = Data[1]
-		local Enchants  = Instance.new("NumberValue",NewItem)
-		Enchants.Name = "Enchants"
-		Enchants.Value = tonumber(Data[11])
-		local Upgrades  = Instance.new("NumberValue",NewItem)
-		Upgrades.Name = "Upgrades"
-		Upgrades.Value = tonumber(Data[9])
-		local Gems  = Instance.new("NumberValue",NewItem)
-		Gems.Name = "Gems"
-		Gems.Value = tonumber(Data[12])
-		--Setting Attributes
-		NewItem:SetAttribute("CurrentSlot",Data[16])
-		NewItem:SetAttribute("CustomLore",Data[3])
-		NewItem:SetAttribute("CustomName",Data[2])
-		NewItem:SetAttribute("EnchantSlots",Data[5])
-		NewItem:SetAttribute("GemSlots",Data[6])
-		NewItem:SetAttribute("Owner",Data[14])
-		NewItem:SetAttribute("Purity",Data[7])
-		NewItem:SetAttribute("Corruption",Data[8])
-		NewItem:SetAttribute("UpgradeAttempts",Data[4])
-		NewItem:SetAttribute("UpgradeAttemptSuccessed",Data[10])
-		NewItem:SetAttribute("Reforge",Data[13])
-		NewItem:SetAttribute("Locked",Data[15])
+	if not Name or not Type then
+		warn("[ItemDictionaryHandler]: DataToItem failed - invalid item ID:", Data[1])
+		return
+	end
+	
+	local NewItem = createNumberValue(Name, Data[1], nil)
+	
+	if Type == 1 then -- Equipment
+		local Enchants = createNumberValue("Enchants", tonumber(Data[11]), NewItem)
+		local Upgrades = createNumberValue("Upgrades", tonumber(Data[9]), NewItem)
+		local Gems = createNumberValue("Gems", tonumber(Data[12]), NewItem)
 
-		NewItem:SetAttribute("Enlightment",Data[21])
-		NewItem:SetAttribute("Aura",Data[22] or 0)
-		NewItem:SetAttribute("NBT",Data[23] or 0)
-		Enchants:SetAttribute("Slot1",Data[17][1][1]..":"..Data[17][1][2])
-		Enchants:SetAttribute("Slot2",Data[17][2][1]..":"..Data[17][2][2])
-		Enchants:SetAttribute("Slot3",Data[17][3][1]..":"..Data[17][3][2])
-		Gems:SetAttribute("Slot1",Data[18][1])
-		Gems:SetAttribute("Slot2",Data[18][2])
-		Gems:SetAttribute("Slot3",Data[18][3])
-		local Str
-		if type(Data[20]) then
-			if #Data[20] == 0 then
-				Str = ""
-			elseif #Data[20] > 0 then
-				for i,v in pairs(Data[20]) do
-					if Str == nil then
-						Str = v 
-					else
-						Str = Str..":"..v
-					end
-				end
-			else Str = ""
+		-- Set basic attributes
+		setMultipleAttributes(NewItem, {
+			CurrentSlot = Data[16],
+			CustomLore = Data[3],
+			CustomName = Data[2],
+			EnchantSlots = Data[5],
+			GemSlots = Data[6],
+			Owner = Data[14],
+			Purity = Data[7],
+			Corruption = Data[8],
+			UpgradeAttempts = Data[4],
+			UpgradeAttemptSuccessed = Data[10],
+			Reforge = Data[13],
+			Locked = Data[15],
+			Enlightment = Data[21],
+			Aura = Data[22] or 0,
+			NBT = Data[23] or 0
+		})
+
+		-- Set enchant attributes
+		setMultipleAttributes(Enchants, {
+			Slot1 = Data[17][1][1] .. ":" .. Data[17][1][2],
+			Slot2 = Data[17][2][1] .. ":" .. Data[17][2][2],
+			Slot3 = Data[17][3][1] .. ":" .. Data[17][3][2]
+		})
+
+		-- Set gem attributes
+		setMultipleAttributes(Gems, {
+			Slot1 = Data[18][1],
+			Slot2 = Data[18][2],
+			Slot3 = Data[18][3]
+		})
+
+		-- Handle State attribute
+		local Str = ""
+		if type(Data[20]) == "table" then
+			if #Data[20] > 0 then
+				Str = table.concat(Data[20], ":")
 			end
 		end
-		NewItem:SetAttribute("State",Str)
-		--Upgrade filling
-		--for name,value in pairs(Dictionary.Upgrades) do
-		--	Upgrades:SetAttribute(name,value)
-		--end
-		print(Data[19])
-		if Data[19] ~= "" then	
-			for index1,upgradeString in pairs(Data[19]:split("-")) do
+		NewItem:SetAttribute("State", Str)
+
+		-- Handle upgrades
+		if Data[19] and Data[19] ~= "" then	
+			for _, upgradeString in pairs(Data[19]:split("-")) do
 				local values = upgradeString:split(":")
-				--for e,f in pairs(StatsPriority) do
-				--	if tonumber(values[1]) == f then
-				--		NewDictionary.Upgrades[e] = values[2]
-				--	end
-				--end
-				print(values)
-				Upgrades:SetAttribute(StatsIndex[tonumber(values[1])],values[2])
+				if #values >= 2 then
+					Upgrades:SetAttribute(StatsIndex[tonumber(values[1])], values[2])
+				end
 			end
 		end
 
-		if Data[16] <= 25 and Data[16] >= 1 then
-			NewItem.Parent = Equipments:FindFirstChild("Slot_"..tostring(Data[16]))
-			--elseif Type == 2 and tonumber(Dictionary.CurrentSlot) <= 36 and tonumber(Dictionary.CurrentSlot) >= 1  then
-			--	--local NewSlot = Consumables:WaitForChild("Slot_"..Dictionary.CurrentSlot)
-			--	--ItemDictionaryHandler.DictionaryToItem(Dictionary,NewSlot)
-			--	ItemDictionaryHandler.DictionaryToItem(Dictionary,Consumables:WaitForChild("Slot_"..Dictionary.CurrentSlot))
-			--elseif Type == 3 and tonumber(Dictionary.CurrentSlot) <= 36 and tonumber(Dictionary.CurrentSlot) >= 1  then
-			--	--local NewSlot = Materials:WaitForChild("Slot_"..Dictionary.CurrentSlot)
-			--	--ItemDictionaryHandler.DictionaryToItem(Dictionary,NewSlot)
-			--	ItemDictionaryHandler.DictionaryToItem(Dictionary,Materials:WaitForChild("Slot_"..Dictionary.CurrentSlot))
-		
-		elseif Data[16] == -1 then
-			NewItem.Parent = Equipped.Main.Weapon
-		elseif Data[16] == -2 then
-			NewItem.Parent = Equipped.Main.Offhand
-		elseif Data[16] == -3 then
-			NewItem.Parent = Equipped.Main.Tool
-		elseif Data[16] == -4 then
-			NewItem.Parent = Equipped.Main.Helmet
-		elseif Data[16] == -5 then
-			NewItem.Parent = Equipped.Main.Chestplate
-		elseif Data[16] == -6 then
-			NewItem.Parent = Equipped.Main.Boots
-		elseif Data[16] == -7 then
-			NewItem.Parent = Equipped.Main.Pet
-		else
-			NewItem.Parent = Bank
-		end
-	elseif Type == 2 or Type == 3 then
-		--if Type == 2 and ItemParent.Parent.Name ~= "Consumables"  then
-		--	return false, ("wrong type? 177 ItemDictionaryHandler")
-		--elseif Type == 3 and ItemParent.Parent.Name ~= "Materials"  then
-		--	return false, ("wrong type? 179 ItemDictionaryHandler")
-		--end
+		-- Set parent based on slot
+		NewItem.Parent = getSlotParent(Player, Type, Data[16])
 
-		NewItem.Value = tonumber(Data[1])
-		NewItem:SetAttribute("CustomName",Data[2])
-		NewItem:SetAttribute("CustomLore",Data[3])
-		NewItem:SetAttribute("Amounts",tonumber(Data[4]))
-		NewItem:SetAttribute("CurrentSlot",tonumber(Data[5]))
-		if Type == 2 and Data[5] <= 36 and Data[5] >= 1 then
-			NewItem.Parent = Consumables:FindFirstChild("Slot_"..tostring(Data[5]))
-			--elseif Type == 2 and tonumber(Dictionary.CurrentSlot) <= 36 and tonumber(Dictionary.CurrentSlot) >= 1  then
-			--	--local NewSlot = Consumables:WaitForChild("Slot_"..Dictionary.CurrentSlot)
-			--	--ItemDictionaryHandler.DictionaryToItem(Dictionary,NewSlot)
-			--	ItemDictionaryHandler.DictionaryToItem(Dictionary,Consumables:WaitForChild("Slot_"..Dictionary.CurrentSlot))
-			--elseif Type == 3 and tonumber(Dictionary.CurrentSlot) <= 36 and tonumber(Dictionary.CurrentSlot) >= 1  then
-			--	--local NewSlot = Materials:WaitForChild("Slot_"..Dictionary.CurrentSlot)
-			--	--ItemDictionaryHandler.DictionaryToItem(Dictionary,NewSlot)
-			--	ItemDictionaryHandler.DictionaryToItem(Dictionary,Materials:WaitForChild("Slot_"..Dictionary.CurrentSlot))
-		elseif Type == 3 and Data[5] <= 36 and Data[5] >= 1 then
-			NewItem.Parent = Materials:FindFirstChild("Slot_"..tostring(Data[5]))
-		elseif Type == 2 and Data[5] == -8 then
-			NewItem.Parent = Equipped.Main.Aura
-		else
-			NewItem.Parent = Bank
-		end
+	elseif Type == 2 or Type == 3 then -- Consumables or Materials
+		setMultipleAttributes(NewItem, {
+			CustomName = Data[2],
+			CustomLore = Data[3],
+			Amounts = tonumber(Data[4]),
+			CurrentSlot = tonumber(Data[5])
+		})
+
+		-- Set parent based on type and slot
+		NewItem.Parent = getSlotParent(Player, Type, Data[5])
 	end
 end
 function ItemDictionaryHandler.ItemToData(Item)
-	local Name, Type = ItemDictionaryHandler.IDToName(Item.Value)
+	local _, Type = ItemDictionaryHandler.IDToName(Item.Value)
 	if Type == 1 then
 		local FormatData= CopyTable.Copy(EquipmentData)
 		FormatData[1] = Item.Value 
@@ -527,7 +584,7 @@ function ItemDictionaryHandler.ItemToData(Item)
 		FormatData[19] = UpgradeString
 		local newtab = {}
 		if Item:GetAttribute("State") ~= "" then
-			for a,b in pairs(Item:GetAttribute("State"):split(":")) do
+			for _,b in pairs(Item:GetAttribute("State"):split(":")) do
 				table.insert(newtab,tonumber(b))
 			end
 		end
@@ -547,7 +604,7 @@ function ItemDictionaryHandler.ItemToData(Item)
 end
 function ItemDictionaryHandler.GetStats(Dictionary,Mode)
 	local Stats = {}
-	local ItemName,ItemType,ItemSubType = ItemDictionaryHandler.IDToName(Dictionary.ID)
+	local _,ItemType,ItemSubType = ItemDictionaryHandler.IDToName(Dictionary.ID)
 	if ItemType ~= 1 then return false, "Wrong type" end
 	if ItemSubType == "Pet" then return false, "Wrong type" end
 	--Stats["ID"] = Dictionary["ID"]
