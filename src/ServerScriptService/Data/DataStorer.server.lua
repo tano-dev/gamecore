@@ -4,48 +4,57 @@ local Players = game:GetService("Players")
 local RunService = game:GetService('RunService')
 local ProfileStore = require(game.ServerScriptService.Library.ProfileStore)
 local LevelingCalculator = require(game:GetService("ReplicatedStorage"):WaitForChild("Modules"):WaitForChild("LevelingCalculator"))
-local ItemDictionaryHandler = require(game:GetService("ServerStorage"):WaitForChild("Modules"):WaitForChild("ItemDictionaryHandler"))
+local ItemConverter = require(game:GetService("ServerStorage"):WaitForChild("Modules"):WaitForChild("ItemConverter"))
 
 local function DataStoreKey()
 	return RunService:IsStudio() and "Studio" or  "Live"
 end
 -- The PROFILE_TEMPLATE table is what new profile "Profile.Data" will default to:
 local PROFILE_TEMPLATE = {
-	MainLevel = 1,
-	MainExp = 0,
-	Place = 0,
-	Zone = 0,
-	Playtime = 0,
-	Coin = 0,
-	Awakened = 0,
-	CombatStatPoints = 0,
-	CombatAssignedStatPoints = 0,
-	Strength = 0,
-	Intelligence = 0,
-	Dexterity = 0,
-	Vitality = 0,
-	Looting  = 0,
-	Proficiency = 0,
-	Combat = 0,
-	Farming = 0,
-	Foraging = 0,
-	Fishing = 0,
-	Mining = 0,
-	Gemcrafting = 0,
-	Crafting = 0,
-	Alchemy = 0,
-	Enchanting = 0,
-	SelectedClass = 0,
-	Advanturer = 0,
-	Warrior = 0,
-	Hunter = 0,
-	Mage = 0,
-	Hair = 0,
-	HairColor = 0,
-	Face = 0,
-	TorsoSkin = 0,
-	ArmSkin = 0,
-	LegSkin = 0,
+-- Player Stats
+    MainLevel = 1,
+    MainExp = 0,
+    Place = 0,
+    Zone = 0,
+    Playtime = 0,
+    Coin = 0,
+    Awakened = 0,
+    
+    -- Combat Stats
+    CombatStatPoints = 0,
+    CombatAssignedStatPoints = 0,
+    Strength = 0,
+    Intelligence = 0,
+    Dexterity = 0,
+    Vitality = 0,
+    
+    -- Profession Stats
+    Looting = 0,
+    Proficiency = 0,
+    Combat = 0,
+    Farming = 0,
+    Foraging = 0,
+    Fishing = 0,
+    Mining = 0,
+    Gemcrafting = 0,
+    Crafting = 0,
+    Alchemy = 0,
+    Enchanting = 0,
+    
+    -- Class Stats
+    SelectedClass = 0,
+    Advanturer = 0,
+    Warrior = 0,
+    Hunter = 0,
+    Mage = 0,
+    
+    -- Appearance
+    Hair = 0,
+    HairColor = 0,
+    Face = 0,
+    TorsoSkin = 0,
+    ArmSkin = 0,
+    LegSkin = 0,
 	Item = {
 		[1] = {},
 		[2] = {},
@@ -346,7 +355,7 @@ local function Init(player: Player, profile: typeof(PlayerStore:StartSessionAsyn
 	local LoadEquipment = coroutine.wrap(function()
 		for _,v in pairs(profile.Data.Item) do
 			if next(v) ~= nil then
-				ItemDictionaryHandler.DataToItem(player,v)
+				ItemConverter.DataToItem(player,v)
 			end
 		end
 		return true
@@ -354,7 +363,7 @@ local function Init(player: Player, profile: typeof(PlayerStore:StartSessionAsyn
 	local LoadConsumable = coroutine.wrap(function()
 		for _,v in pairs(profile.Data.Consumable) do
 			if next(v) ~= nil then
-				ItemDictionaryHandler.DataToItem(player,v)
+				ItemConverter.DataToItem(player,v)
 			end
 		end
 		return true
@@ -362,7 +371,7 @@ local function Init(player: Player, profile: typeof(PlayerStore:StartSessionAsyn
 	local LoadMaterial = coroutine.wrap(function()
 		for _,v in pairs(profile.Data.Material) do
 			if next(v) ~= nil then
-				ItemDictionaryHandler.DataToItem(player,v)
+				ItemConverter.DataToItem(player,v)
 			end
 		end
 		return true
@@ -370,7 +379,7 @@ local function Init(player: Player, profile: typeof(PlayerStore:StartSessionAsyn
 	local LoadBank = coroutine.wrap(function()
 		for _,v in pairs(profile.Data.Bank) do
 			if next(v) ~= nil then
-				ItemDictionaryHandler.DataToItem(player,v)
+				ItemConverter.DataToItem(player,v)
 			end
 		end
 		return true
@@ -385,7 +394,13 @@ local function Init(player: Player, profile: typeof(PlayerStore:StartSessionAsyn
 		local function FireEvent()
 			print(indexSlot)
 			print(Object)
-			profile.Data.Item[indexSlot] = ItemDictionaryHandler.ItemToData(Object)
+			local success, itemData = pcall(ItemConverter.ItemToData, Object)
+            if success and itemData then
+                print("Item converted to data successfully:", Object.Name)
+				profile.Data.Item[indexSlot] = itemData
+            else
+                warn("Failed to convert item to data:", Object.Name)
+            end
 		end
 		local Itemconnection
 		local Upgradeconnection
@@ -423,7 +438,13 @@ local function Init(player: Player, profile: typeof(PlayerStore:StartSessionAsyn
 		local function FireEvent()
 			print(indexSlot)
 			print(Object)
-			profile.Data.Consumable[indexSlot] = ItemDictionaryHandler.ItemToData(Object)
+			local success, itemData = pcall(ItemConverter.ItemToData, Object)
+			if success and itemData then
+				print("Consumable converted to data successfully:", Object.Name)
+				profile.Data.Consumable[indexSlot] = itemData
+			else
+				warn("Failed to convert consumable to data:", Object.Name)
+			end
 		end
 		local Itemconnection
 		local Parentconnection
@@ -443,7 +464,13 @@ local function Init(player: Player, profile: typeof(PlayerStore:StartSessionAsyn
 		local function FireEvent()
 			print(indexSlot)
 			print(Object)
-			profile.Data.Material[indexSlot] = ItemDictionaryHandler.ItemToData(Object)
+			local success, itemData = pcall(ItemConverter.ItemToData, Object)
+			if success and itemData then
+				print("Material converted to data successfully:", Object.Name)
+				profile.Data.Material[indexSlot] = itemData
+			else
+				warn("Failed to convert material to data:", Object.Name)
+			end
 		end
 		local Itemconnection
 		local Parentconnection
@@ -466,9 +493,14 @@ local function Init(player: Player, profile: typeof(PlayerStore:StartSessionAsyn
 				print(objectAdded)
 				objectAdded:SetAttribute("CurrentSlot",indexSlot)
 				print(indexSlot)
-				profile.Data.Item[indexSlot] = ItemDictionaryHandler.ItemToData(objectAdded)
-				print(ItemDictionaryHandler.ItemToData(objectAdded))
-				LinkItem(objectAdded,i)
+				local success, itemData = pcall(ItemConverter.ItemToData, objectAdded)
+				if success and itemData then
+					print("Item converted to data successfully:", objectAdded.Name)
+					profile.Data.Item[indexSlot] = itemData
+					LinkItem(objectAdded,i)
+				else
+					warn("Failed to convert item to data:", objectAdded.Name)
+				end
 			end)
 			PlayerInventory:FindFirstChild("Equipments"):FindFirstChild("Slot_"..i).ChildRemoved:Connect(function()
 				local indexSlot = i
@@ -485,9 +517,14 @@ local function Init(player: Player, profile: typeof(PlayerStore:StartSessionAsyn
 			print(objectAdded)
 			objectAdded:SetAttribute("CurrentSlot",indexSlot)
 			print(indexSlot)
-			profile.Data.Consumable[indexSlot] = ItemDictionaryHandler.ItemToData(objectAdded)
-			print(ItemDictionaryHandler.ItemToData(objectAdded))
-			LinkConsumable(objectAdded,i)
+			local success, itemData = pcall(ItemConverter.ItemToData, objectAdded)
+			if success and itemData then
+				print("Consumable converted to data successfully:", objectAdded.Name)
+				profile.Data.Consumable[indexSlot] = itemData
+				LinkConsumable(objectAdded,i)
+			else
+				warn("Failed to convert consumable to data:", objectAdded.Name)
+			end
 		end)
 		PlayerInventory:FindFirstChild("Consumables"):FindFirstChild("Slot_"..i).ChildRemoved:Connect(function()
 			local indexSlot = i
@@ -504,9 +541,14 @@ local function Init(player: Player, profile: typeof(PlayerStore:StartSessionAsyn
 			print(objectAdded)
 			objectAdded:SetAttribute("CurrentSlot",indexSlot)
 			print(indexSlot)
-			profile.Data.Material[indexSlot] = ItemDictionaryHandler.ItemToData(objectAdded)
-			print(ItemDictionaryHandler.ItemToData(objectAdded))
-			LinkMaterial(objectAdded,i)
+			local success, itemData = pcall(ItemConverter.ItemToData, objectAdded)
+			if success and itemData then
+				print("Material converted to data successfully:", objectAdded.Name)
+				profile.Data.Material[indexSlot] = itemData
+				LinkMaterial(objectAdded,i)
+			else
+				warn("Failed to convert material to data:", objectAdded.Name)
+			end
 		end)
 		PlayerInventory:FindFirstChild("Materials"):FindFirstChild("Slot_"..i).ChildRemoved:Connect(function()
 			local indexSlot = i

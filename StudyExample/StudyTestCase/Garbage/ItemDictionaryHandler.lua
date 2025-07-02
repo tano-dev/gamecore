@@ -1,40 +1,86 @@
---APIs
 --[[
-Main APIs:
- MainUsage
-	IDToName(ID)
-		> return Name, Type, SubType
-	NameToID(Name)
-		> return ID, Type, SubType
-	ItemToDictionary(Item)
-		> return Dictionary
-	DictionaryToItem(Dictionary,ItemParent)
-		> yield error if wrong slot
- DataStoreUsage
- 	DictionaryToData(Dictionary)
- 		> return Data for saving
- 	DataToDictionary(Data)
- 		> return Dictionary for loading
- Item Crafting/DismantlingUsage
- 	GetStats(Dictionary,Mode)
- 		>return specific stats
- 		Mode 1-all upgrade related
- 		2-upgreade
- 		3-enchant
- 		4-gem
- 		0-remove status
-	
-Note: Updated to work with unified ItemDataStogare.lua system
-]]
---Usage 
+ItemDictionaryHandler API Overview
+
+This module provides a unified interface for converting between different representations of in-game items:
+- Item instances (Roblox objects)
+- Dictionaries (Lua tables with item data)
+- Data arrays (for DataStore serialization)
+
+API Functions:
+
+1. IDToName(ID)
+	- Converts an item ID (number) to its Name, Type, and SubType.
+	- Returns: Name (string), Type (number), SubType (string)
+	- Example:
+		local name, type, subtype = ItemDictionaryHandler.IDToName(1001)
+
+2. NameToID(Name)
+	- Converts an item Name (string) to its ID, Type, and SubType.
+	- Returns: ID (number), Type (number), SubType (string)
+	- Example:
+		local id, type, subtype = ItemDictionaryHandler.NameToID("Iron Sword")
+
+3. ItemToDictionary(Item)
+	- Converts a Roblox Item instance (NumberValue) into a Lua table (dictionary) containing all its attributes and children.
+	- Returns: Dictionary (table)
+	- Example:
+		local dict = ItemDictionaryHandler.ItemToDictionary(itemInstance)
+
+4. DictionaryToItem(Dictionary, ItemParent)
+	- Creates a Roblox Item instance from a dictionary and parents it to ItemParent.
+	- Returns: New Item instance or error
+	- Example:
+		local item = ItemDictionaryHandler.DictionaryToItem(dict, inventoryFolder)
+
+5. DictionaryToData(Dictionary)
+	- Converts a dictionary to a DataStore-friendly array (table) for saving.
+	- Returns: Data (table)
+	- Example:
+		local data = ItemDictionaryHandler.DictionaryToData(dict)
+
+6. DataToDictionary(Data)
+	- Converts a DataStore array back into a dictionary for loading.
+	- Returns: Dictionary (table)
+	- Example:
+		local dict = ItemDictionaryHandler.DataToDictionary(data)
+
+7. DataToItem(Player, Data)
+	- Creates and parents an Item instance to the appropriate inventory slot for the given Player, using DataStore data.
+	- Example:
+		ItemDictionaryHandler.DataToItem(player, data)
+
+8. ItemToData(Item)
+	- Converts an Item instance to a DataStore array.
+	- Returns: Data (table)
+	- Example:
+		local data = ItemDictionaryHandler.ItemToData(itemInstance)
+
+9. GetStats(Dictionary, Mode)
+	- Extracts specific stats from a dictionary, depending on Mode:
+		Mode 1: All upgrade-related stats
+		Mode 2: Only upgrade stats
+		Mode 3: Only enchant stats
+		Mode 4: Only gem stats
+		Mode 0: Removes status-related fields
+	- Returns: Stats table
+	- Example:
+		local stats = ItemDictionaryHandler.GetStats(dict, 1)
+
+Note: This module is designed to work with a unified ItemDataStogare.lua system for consistent item data management.
+
+-- Usage Example:
 --[[
-local a = require(game.ReplicatedStorage.Modules.ItemDictionaryHandler) 
-local b = a.ItemToDictionary(game.Players.tano.Inventory.Equipments.Slot_4:FindFirstChildOfClass("NumberValue")) 
-print(b)
-
-
-
+--[[
+local ItemDictionaryHandler = require(game.ReplicatedStorage.Modules.ItemDictionaryHandler)
+local dict = ItemDictionaryHandler.ItemToDictionary(game.Players.tano.Inventory.Equipments.Slot_1:FindFirstChildOfClass("NumberValue"))
+print(dict)
+local ServerModules = require(game.ServerStorage.Modules)
+local ItemDictionaryHandler = ServerModules("ItemDictionaryHandler") 
+local dict = ItemDictionaryHandler.ItemToDictionary(game.Players.tano.Inventory.Equipments.Slot_1:FindFirstChildOfClass("NumberValue")) 
+print(dict)
 ]]
+
+
 local ItemDictionaryHandler = {}
 local ConverterPattern = "(%d+)%s?:%s?(%d+)"
 -- Cache ReplicatedStorage reference

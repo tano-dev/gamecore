@@ -1,1609 +1,868 @@
---APIs
+-- ItemSlotHandler - Optimized Version
 --[[
 Main APIs:
-	CorrectSlotNumber(Player)
-	GetSlots(Player,IfCheck)
-		> IfCheck is true then fire CorrectSlotNumber
-		> return EquipmentsTable, ConsumablesTable, MaterialsTable, BankTable, EquippedTable 
-	MoveToSlot(Player,Dictionary,IsBank)
-		> IsBank is true then move dictionary to bank
-	GetEmptySlots(Player,Mode,Order)
-		> Mode:1,2,3,4,5 
-			> 1: EquipmentSlots
-			> 2: ConsumableSlots
-			> 3: MaterialSlots
-			> 4: 1+2+3 (will ignore Order)
-			> 5: EquippedMainTab + EquippedAccessoryTab
-			Note: mode 5 wont return bool
-		> Order: GetLowest,GetHighest
-			> Will only pass the Lowest/Highest
-		> return IfSuccess, {}
-	EquipItem(Player,SelectedSlot,IsAccessory,Slot)
-		> SelectedSlot must be like Equipments_Number or Consumables_Number
-		> Slot must be "Weapon",... .IF IsAccessory true then Slot must be Number
-		> return IfSuccess, ErrorMessage
-	UnequipItem(Player,SelectedSlot,IsBank)
-		> IsBank = true will send item to the bank if inventory is fulled
-		> return IfSuccess, errorMessage
-	SwapItem(Player,Slot1,Slot2,IsBank)
-AdditionAPIs:
-	getLowest(Table)
-	getHighest(Table)
-Note:
---Change the EquipItem(Player,SelectedSlot,IsAccessory,Slot) --> EquipItem(Player,SelectedSlot,Slot) like Accessory_1 instead plr,1,true,slot
---Will rework a bit once started on Addiotion Type/ID (Scroll,Gem,Helmet,...)
+    CorrectSlotNumber(Player, Mode)
+    GetSlots(Player, IfCheck, Mode)
+    MoveToSlot(Player, Dictionary, IsBank)
+    GetEmptySlots(Player, Mode, Order)
+    EquipItem(Player, SelectedSlot, Slot)
+    UnequipItem(Player, SelectedSlot, IsBank)
+    SwapSlots(Player, Slot1, Slot2)
+    SplitSlot(Player, SelectedSlot, Amounts)
+    MoveItem(Player, SelectedSlot, NewSlot)
 ]]
-local ItemSlotHandler = {}
-local CopyTable = require(game:GetService("ReplicatedStorage"):WaitForChild("Modules"):WaitForChild("CopyTable"))
-local ItemDictionaryHandler = require(game:GetService("ServerStorage"):WaitForChild("Modules"):WaitForChild("ItemDictionaryHandler"))
-local EquipmentFormat = require(game:GetService("ReplicatedStorage"):WaitForChild("Format"):WaitForChild("EquipmentFormat"))
-local EquippedFormat = require(game:GetService("ReplicatedStorage"):WaitForChild("Format"):WaitForChild("EquippedFormat"))
 
---Stogare
-local ItemStogare = game:GetService("ReplicatedStorage"):WaitForChild("GameItems")
-local EquipmentsStogare = ItemStogare:WaitForChild("Equipments")
-local ConsumablesStogare = ItemStogare:WaitForChild("Consumables")
-local MaterialsStogare = ItemStogare:WaitForChild("Materials")
---DataType
-local WeaponType = {"Longsword","Rapier","Katana","Dagger","Staff","Axe","Hoe","Fishing Rod","Pickaxe"}
-local ToolType = {"Axe","Hoe","Fishing Rod","Pickaxe"}
---
-local StringConverterPattern = "(%a+)%s?_%s?(%d+)"
-local EquippedTab = {
-	"Weapon",
-	"Offhand",
-	"Aura",
-	"Pet",
-	"Helmet",
-	"Chestplate",
-	"Boots",
-	"Tool",
-	"Accessory",
-	"Bow",
-	"Fishing",
+local ItemSlotHandler = {}
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
+-- Dependencies
+local CopyTable = require(game:GetService("ServerStorage"):WaitForChild("Modules"):WaitForChild("CopyTable"))
+local ItemConverter = require(game:GetService("ServerStorage"):WaitForChild("Modules"):WaitForChild("ItemConverter"))
+local EquippedFormat = require(game:GetService("ServerStorage"):WaitForChild("Format"):WaitForChild("EquippedFormat"))
+
+-- Storage references
+local ItemStorage = game:GetService("ReplicatedStorage"):WaitForChild("GameItems")
+local StorageContainers = {
+    [1] = ItemStorage:WaitForChild("Equipments"),
+    [2] = ItemStorage:WaitForChild("Consumables"),
+    [3] = ItemStorage:WaitForChild("Materials")
 }
 
--- Utility functions to get the index and value of the lowest/highest element in a table
+-- Constants
+local SLOT_LIMITS = {
+    Equipment = 25,
+    Consumable = 36,
+    Material = 36
+}
+
+local ITEM_TYPES = {
+    EQUIPMENT = 1,
+    CONSUMABLE = 2,
+    MATERIAL = 3
+}
+
+local WEAPON_TYPES = {"Longsword", "Rapier", "Katana", "Dagger", "Staff", "Axe", "Hoe", "Fishing Rod", "Pickaxe"}
+local TOOL_TYPES = {"Axe", "Hoe", "Fishing Rod", "Pickaxe"}
+
+local STRING_PATTERN = "(%a+)%s?_%s?(%d+)"
+local EQUIPPED_TABS = {
+    "Weapon", "Offhand", "Aura", "Pet", "Helmet", "Chestplate", "Boots", "Tool", "Accessory", "Bow", "Fishing"
+}
+
+-- Utility functions
 local function getLowest(tbl)
-	local minIndex, minValue
-	for i, v in pairs(tbl) do
-		local num = tonumber(v)
-		if num ~= nil and (minValue == nil or num < minValue) then
-			minValue = num
-			minIndex = i
-		end
-	end
-	return minIndex, minValue
+    local minIndex, minValue
+    for i, v in pairs(tbl) do
+        local num = tonumber(v)
+        if num and (not minValue or num < minValue) then
+            minValue = num
+            minIndex = i
+        end
+    end
+    return minIndex, minValue
 end
 
 local function getHighest(tbl)
-	local maxIndex, maxValue
-	for i, v in pairs(tbl) do
-		local num = tonumber(v)
-		if num ~= nil and (maxValue == nil or num > maxValue) then
-			maxValue = num
-			maxIndex = i
-		end
-	end
-	return maxIndex, maxValue
+    local maxIndex, maxValue
+    for i, v in pairs(tbl) do
+        local num = tonumber(v)
+        if num and (not maxValue or num > maxValue) then
+            maxValue = num
+            maxIndex = i
+        end
+    end
+    return maxIndex, maxValue
 end
---[[
-Mode 1 - ALL 2-Equipments 3-Consumable 4-Material 5-Equipped
-Loop -> get player 
-]]
-function ItemSlotHandler.CorrectSlotNumber(Player,Mode)
-	local SelectedMode = Mode or 1
-	print("Mode: "..SelectedMode)
-	local Bank = Player:WaitForChild("Bank")
-	local Inventory = Player:WaitForChild("Inventory")
-	local Equipments = Inventory:WaitForChild("Equipments")
-	local Consumables = Inventory:WaitForChild("Consumables")
-	local Materials = Inventory:WaitForChild("Materials")
-	local Equipped = Inventory:WaitForChild("Equipped")
-	local MainTab = Equipped:WaitForChild("Main")
-	local BowTab = Equipped:WaitForChild("Bow")
-	local FishingTab = Equipped:WaitForChild("Fishing")
-	local AccessoryTab = Equipped:WaitForChild("Accessory")
-	local OccupiedEquipmentSlots = {}
-	local EmptyEquipmentSlot = {}
-	local OccupiedMaterialSlots = {}
-	local EmptyMaterialSlot = {}
-	local OccupiedConsumabletSlots = {}
-	local EmptyConsumableSlot = {}
-	local consumabletable = {}
-	local materialtable = {}
-	--Equipments
-	if SelectedMode == 1 or SelectedMode == 2 then
-		--Calling Loop on player equipment inv
-		--[[
-		B1
-		Chọn hết slot rồi xét
-		Nếu hơn 2 thì lặp trong slot đó cho đến khi còn 1, phần dư sẽ lưu vào OccupiedEquipmentSlots
-		Nếu = 1 thì giữ nguyên
-		Nếu bé hơn 1 thì lưu vào các slot du
-		B2
-		Lấy mỗi OccupiedEquipmentSlots
-		Nếu ko còn EmptyEquipmentSlot then cho vào bank
-		Nếu còn thì cho vào slot nhỏ nhất
-		]]
-		for i,v in pairs(Equipments:GetChildren()) do
-			local ItemNumber = #v:GetChildren()
-			local slot,slotnumber = string.match(v.Name,StringConverterPattern)
-			if ItemNumber >= 2 then -- if more than 2 items in then move it to OccupiedEquipmentSlots (convert item to dictionary)
 
-				for a,b in pairs(v:GetChildren()) do -- Getting Children inside by looping til one left
-					task.wait()
-					print(ItemNumber)  
-
-					if ItemNumber >= 2 then  --If STILL MROE THAN 2
-
-						local NewEquipment = ItemDictionaryHandler.ItemToDictionary(b)
-						print(NewEquipment)
-						table.insert(OccupiedEquipmentSlots,NewEquipment)
-						print(OccupiedEquipmentSlots)
-						b:Destroy()
-						ItemNumber = ItemNumber - 1
-
-					else  --IF it is last one
-						b:SetAttribute("CurrentSlot",tonumber(slotnumber))
-					end
-				end
-			elseif ItemNumber == 1 then -- If one then just recorrect the slot
-				print(v)
-				local b = v:FindFirstChildOfClass("NumberValue")
-				if b:GetAttribute("CurrentSlot") ~= tonumber(slotnumber) then
-					if Equipments:FindFirstChild("Slot_"..tostring(b:GetAttribute("CurrentSlot"))) then
-						if #Equipments:FindFirstChild("Slot_"..tostring(b:GetAttribute("CurrentSlot"))):GetChildren() > 0 then
-							if v:FindFirstChildOfClass("NumberValue") ~= b then
-								local NewEquipment = ItemDictionaryHandler.ItemToDictionary(b)
-								print(NewEquipment)
-								table.insert(OccupiedEquipmentSlots,NewEquipment)
-								print(OccupiedEquipmentSlots)
-								b:Destroy()
-								ItemNumber = ItemNumber - 1
-							else
-								b:SetAttribute("CurrentSlot",tonumber(slotnumber))
-							end
-
-						else 
-							b.Parent = Equipments:FindFirstChild("Slot_"..tostring(b:GetAttribute("CurrentSlot")))
-						end
-					else
-						if v:FindFirstChildOfClass("NumberValue") == b then
-							b:SetAttribute("CurrentSlot",tonumber(slotnumber))
-						else
-							local copybankitem = b:Clone()
-							copybankitem:SetAttribute("CurrentSlot",0)
-							copybankitem.Parent = Bank
-							b:Destroy()
-						end
-					end
-				else
-					b:SetAttribute("CurrentSlot",tonumber(slotnumber))
-				end
-			elseif ItemNumber < 1 then
-				--Adding to EmptySlots
-				table.insert(EmptyEquipmentSlot,tonumber(slotnumber))
-			end
-			--print(#EmptyEquipmentSlot)
-		end
-		--print(OccupiedEquipmentSlots)
-		for i,v in pairs(OccupiedEquipmentSlots) do
-			if #EmptyEquipmentSlot == 0 then -- No slot left
-				ItemDictionaryHandler.DictionaryToItem(v,Bank)
-			else
-				local Index, Low = getLowest(EmptyEquipmentSlot)
-				--print("Lowest slot: "..Low.." and index "..Index)
-				--print(i)
-				--print(v)
-				local NewSlot = Equipments:WaitForChild("Slot_"..tostring(Low))
-				v["CurrentSlot"] = Low
-				ItemDictionaryHandler.DictionaryToItem(v,NewSlot)
-				table.remove(EmptyEquipmentSlot,Index)
-			end
-		end
-	end
-	--Materials
-	if SelectedMode == 1 or SelectedMode == 4 then
-		for i,v in pairs(Materials:GetChildren()) do
-			local ItemNumber = #v:GetChildren()
-			local slot,slotnumber = string.match(v.Name,StringConverterPattern)
-			if ItemNumber >= 2 then
-				for a,b in pairs(v:GetChildren()) do
-					if ItemNumber >= 2 then
-						local NewMaterial = ItemDictionaryHandler.ItemToDictionary(b)
-						table.insert(OccupiedMaterialSlots,NewMaterial)
-						b:Destroy()
-						ItemNumber = ItemNumber - 1
-					else
-						b:SetAttribute("CurrentSlot",tonumber(slotnumber))
-					end
-				end
-			elseif ItemNumber == 1 then
-				print(v)
-				local b = v:FindFirstChildOfClass("NumberValue")
-				local itemdata = require(MaterialsStogare:FindFirstChild(b.Name))
-				local IsDestroyed = false
-				if itemdata.Stackable == true then
-					local amounts = b:GetAttribute("Amounts")
-					if amounts > itemdata.StackSize then
-						repeat
-							amounts = amounts - itemdata.StackSize
-							local newitem = ItemDictionaryHandler.ItemToDictionary(b)
-							newitem.Amounts = amounts
-							table.insert(OccupiedMaterialSlots,newitem)
-						until amounts <= itemdata.StackSize
-						if amounts <= 0 then
-							IsDestroyed = true
-							b:Destroy()
-						else
-							b:SetAttribute("Amounts",itemdata.StackSize)
-						end
-					elseif amounts <= 0 then
-						IsDestroyed = true
-						b:Destroy()
-					end
-				end
-				if not IsDestroyed then
-					if b:GetAttribute("CurrentSlot") ~= tonumber(slotnumber) then
-						if Materials:FindFirstChild("Slot_"..tostring(b:GetAttribute("CurrentSlot"))) then
-							if #Materials:FindFirstChild("Slot_"..tostring(b:GetAttribute("CurrentSlot"))):GetChildren() > 0 then
-								if v:FindFirstChildOfClass("NumberValue") ~= b then
-									local NewMaterial = ItemDictionaryHandler.ItemToDictionary(b)
-									table.insert(OccupiedMaterialSlots,NewMaterial)
-									b:Destroy()
-									ItemNumber = ItemNumber - 1
-								else
-									b:SetAttribute("CurrentSlot",tonumber(slotnumber))
-								end
-
-							else 
-								b.Parent = Materials:FindFirstChild("Slot_"..tostring(b:GetAttribute("CurrentSlot")))
-							end
-						else
-							if v:FindFirstChildOfClass("NumberValue") == b then
-								b:SetAttribute("CurrentSlot",tonumber(slotnumber))
-							else
-								local copybankitem = b:Clone()
-								copybankitem:SetAttribute("CurrentSlot",0)
-								copybankitem.Parent = Bank
-								b:Destroy()
-							end
-						end
-					else
-						b:SetAttribute("CurrentSlot",tonumber(slotnumber))
-					end
-				end
-
-			elseif ItemNumber < 1 then
-				table.insert(EmptyMaterialSlot,tonumber(slotnumber))
-			end
-		end
-		for i,v in pairs(OccupiedMaterialSlots) do
-			if #EmptyMaterialSlot == 0 then
-				ItemDictionaryHandler.DictionaryToItem(v,Bank)
-			else
-				local Index, Low = getLowest(EmptyMaterialSlot)
-				local NewSlot = Materials:WaitForChild("Slot_"..Low)
-				v.CurrentSlot = Low
-				ItemDictionaryHandler.DictionaryToItem(v,NewSlot)
-				table.remove(EmptyMaterialSlot,Index)
-			end
-		end
-	end
-	--Consumables
-	if SelectedMode == 1 or SelectedMode == 3 then
-		for i,v in pairs(Consumables:GetChildren()) do
-			local ItemNumber = #v:GetChildren()
-			local slot,slotnumber = string.match(v.Name,StringConverterPattern)
-			if ItemNumber >= 2 then
-				for a,b in pairs(v:GetChildren()) do
-					if ItemNumber >= 2 then
-						local NewConsumable = ItemDictionaryHandler.ItemToDictionary(b)
-						table.insert(OccupiedConsumabletSlots,NewConsumable)
-						b:Destroy()
-						ItemNumber = ItemNumber - 1
-					else
-						b:SetAttribute("CurrentSlot",tonumber(slotnumber))
-					end
-				end
-			elseif ItemNumber == 1 then
-				print(v)
-				local b = v:FindFirstChildOfClass("NumberValue")
-				--if ConsumablesStogare:FindFirstChild(b.Name) == nil and MaterialsStogare:FindFirstChild(b.Name) == nil and EquipmentsStogare:FindFirstChild(b.Name) == nil then b:Destroy()
-				--elseif ConsumablesStogare:FindFirstChild(b.Name) == nil then b:SetAttribute("CurrentSlot",0) b.Parent = Bank end
-				local itemdata = require(ConsumablesStogare:FindFirstChild(b.Name))
-				local IsDestroyed = false
-				if itemdata.Stackable == true then
-					local amounts = b:GetAttribute("Amounts")
-					if amounts > itemdata.StackSize then
-						repeat
-							amounts = amounts - itemdata.StackSize
-							local newitem = ItemDictionaryHandler.ItemToDictionary(b)
-							newitem.Amounts = itemdata.StackSize
-							table.insert(OccupiedConsumabletSlots,newitem)
-						until amounts <= itemdata.StackSize
-						if amounts <= 0 then
-							IsDestroyed = true
-							b:Destroy()
-						else
-							b:SetAttribute("Amounts",amounts)
-						end
-					elseif amounts <= 0 then
-						IsDestroyed = true
-						b:Destroy()
-					end
-				end
-				if not IsDestroyed then
-					if b:GetAttribute("CurrentSlot") ~= tonumber(slotnumber) then
-						if Consumables:FindFirstChild("Slot_"..tostring(b:GetAttribute("CurrentSlot"))) then
-							if #Consumables:FindFirstChild("Slot_"..tostring(b:GetAttribute("CurrentSlot"))):GetChildren() > 0 then
-								if v:FindFirstChildOfClass("NumberValue") ~= b then
-									local NewConsumable = ItemDictionaryHandler.ItemToDictionary(b)
-									table.insert(OccupiedConsumabletSlots,NewConsumable)
-									b:Destroy()
-									ItemNumber = ItemNumber - 1
-								else
-									b:SetAttribute("CurrentSlot",tonumber(slotnumber))
-								end
-
-							else 
-								b.Parent = Consumables:FindFirstChild("Slot_"..tostring(b:GetAttribute("CurrentSlot")))
-							end
-						else
-							if v:FindFirstChildOfClass("NumberValue") == b then
-								b:SetAttribute("CurrentSlot",tonumber(slotnumber))
-							else
-								local copybankitem = b:Clone()
-								copybankitem:SetAttribute("CurrentSlot",0)
-								copybankitem.Parent = Bank
-								b:Destroy()
-							end
-						end
-					else
-						b:SetAttribute("CurrentSlot",tonumber(slotnumber))
-					end
-				end
-			elseif ItemNumber < 1 then
-				table.insert(EmptyConsumableSlot,tonumber(slotnumber))
-			end
-		end
-		for i,v in pairs(OccupiedConsumabletSlots) do
-			if #EmptyConsumableSlot == 0 then
-				ItemDictionaryHandler.DictionaryToItem(v,Bank)
-			else
-				local Index, Low = getLowest(EmptyConsumableSlot)
-				local NewSlot = Consumables:WaitForChild("Slot_"..Low)
-				v.CurrentSlot = Low
-				ItemDictionaryHandler.DictionaryToItem(v,NewSlot)
-				table.remove(EmptyConsumableSlot,Index)
-			end
-		end
-	end
-	--Equipped
-	if SelectedMode == 1 or SelectedMode == 5 then
-		for i,v in pairs(MainTab:GetChildren()) do
-			local ItemNumber = #v:GetChildren()
-			local slot,slotnumber = string.match(v.Name,StringConverterPattern)
-			if ItemNumber >= 2 then
-				for a,b in pairs(v:GetChildren()) do
-					if ItemNumber >= 2 then
-						b:SetAttribute("CurrentSlot",0)
-						local NewEquipped = ItemDictionaryHandler.ItemToDictionary(b)
-						b:Destroy()
-						ItemSlotHandler.MoveToSlot(Player,NewEquipped)
-						ItemNumber = ItemNumber - 1
-					else
-						b:SetAttribute("CurrentSlot",-1)
-					end
-				end
-			elseif ItemNumber == 1 then
-				print(v)
-				for a,b in pairs(v:GetChildren()) do
-					b:SetAttribute("CurrentSlot",-1)
-				end
-			end
-		end
-		for i,v in pairs(BowTab:GetChildren()) do
-			local ItemNumber = #v:GetChildren()
-			local slot,slotnumber = string.match(v.Name,StringConverterPattern)
-			if ItemNumber >= 2 then
-				for a,b in pairs(v:GetChildren()) do
-					if ItemNumber >= 2 then
-						b:SetAttribute("CurrentSlot",0)
-						local NewEquipped = ItemDictionaryHandler.ItemToDictionary(b)
-						b:Destroy()
-						ItemSlotHandler.MoveToSlot(Player,NewEquipped)
-						ItemNumber = ItemNumber - 1
-					else
-						b:SetAttribute("CurrentSlot",-1)
-					end
-				end
-			elseif ItemNumber == 1 then
-				print(v)
-				for a,b in pairs(v:GetChildren()) do
-					b:SetAttribute("CurrentSlot",-1)
-				end
-			end
-		end
-		for i,v in pairs(FishingTab:GetChildren()) do
-			local ItemNumber = #v:GetChildren()
-			local slot,slotnumber = string.match(v.Name,StringConverterPattern)
-			if ItemNumber >= 2 then
-				for a,b in pairs(v:GetChildren()) do
-					if ItemNumber >= 2 then
-						b:SetAttribute("CurrentSlot",0)
-						local NewEquipped = ItemDictionaryHandler.ItemToDictionary(b)
-						b:Destroy()
-						ItemSlotHandler.MoveToSlot(Player,NewEquipped)
-						ItemNumber = ItemNumber - 1
-					else
-						b:SetAttribute("CurrentSlot",-1)
-					end
-				end
-			elseif ItemNumber == 1 then
-				print(v)
-				for a,b in pairs(v:GetChildren()) do
-					b:SetAttribute("CurrentSlot",-1)
-				end
-			end
-		end
-		for i,v in pairs(AccessoryTab:GetChildren()) do
-			local ItemNumber = #v:GetChildren()
-			local slot,slotnumber = string.match(v.Name,StringConverterPattern)
-			if ItemNumber >= 2 then
-				for a,b in pairs(v:GetChildren()) do
-					if ItemNumber >= 2 then
-						b:SetAttribute("CurrentSlot",0)
-						local NewEquipped = ItemDictionaryHandler.ItemToDictionary(b)
-						b:Destroy()
-						ItemSlotHandler.MoveToSlot(Player,NewEquipped)
-						ItemNumber = ItemNumber - 1
-					else
-						b:SetAttribute("CurrentSlot",-1)
-					end
-				end
-			elseif ItemNumber == 1 then
-				print(v)
-				for a,b in pairs(v:GetChildren()) do
-					b:SetAttribute("CurrentSlot",-1)
-				end
-			end
-		end
-	end
-	if SelectedMode == 6 then
-		for i,v in pairs(Bank:GetChildren()) do
-			v:SetAttribute("CurrentSlot",0)
-		end
-	end
+-- Enhanced player data getter with error handling and caching
+local playerInventoryCache = {}
+local function getPlayerInventory(player)
+    -- Check cache first
+    if playerInventoryCache[player] then
+        local cached = playerInventoryCache[player]
+        -- Validate cache is still valid
+        if cached.Bank and cached.Bank.Parent then
+            return cached
+        else
+            playerInventoryCache[player] = nil
+        end
+    end
+    
+    local success, result = pcall(function()
+        return {
+            Bank = player:WaitForChild("Bank"),
+            Inventory = player:WaitForChild("Inventory"),
+            Equipments = player:WaitForChild("Inventory"):WaitForChild("Equipments"),
+            Consumables = player:WaitForChild("Inventory"):WaitForChild("Consumables"),
+            Materials = player:WaitForChild("Inventory"):WaitForChild("Materials"),
+            Equipped = player:WaitForChild("Inventory"):WaitForChild("Equipped"),
+            MainTab = player:WaitForChild("Inventory"):WaitForChild("Equipped"):WaitForChild("Main"),
+            AccessoryTab = player:WaitForChild("Inventory"):WaitForChild("Equipped"):WaitForChild("Accessory"),
+            BowTab = player:WaitForChild("Inventory"):WaitForChild("Equipped"):WaitForChild("Bow"),
+            FishingTab = player:WaitForChild("Inventory"):WaitForChild("Equipped"):WaitForChild("Fishing")
+        }
+    end)
+    
+    if not success then
+        warn("Failed to get player inventory for", player.Name, ":", result)
+        return nil
+    end
+    
+    -- Cache the result
+    playerInventoryCache[player] = result
+    
+    -- Clean up cache when player leaves
+    game.Players.PlayerRemoving:Connect(function(leavingPlayer)
+        if leavingPlayer == player then
+            playerInventoryCache[player] = nil
+        end
+    end)
+    
+    return result
 end
-function ItemSlotHandler.GetSlots(Player,CorrectSlots,Mode)
-	local IsCorrectSlots = false or CorrectSlots
-	local Bank = Player:WaitForChild("Bank")
-	local Inventory = Player:WaitForChild("Inventory")
-	local Equipments = Inventory:WaitForChild("Equipments")
-	local Consumables = Inventory:WaitForChild("Consumables")
-	local Materials = Inventory:WaitForChild("Materials")
-	local Equipped = Inventory:WaitForChild("Equipped")
-	local MainTab = Equipped:WaitForChild("Main")
-	local AccessoryTab = Equipped:WaitForChild("Accessory")
-	local FishingTab = Equipped:WaitForChild("Fishing")
-	local BowTab = Equipped:WaitForChild("Bow")
-	local EquipmentsTable = {}
-	local ConsumablesTable = {}
-	local MaterialsTable = {}
-	local EquippedTable = CopyTable.Copy(EquippedFormat)
-	local BankTable = {}
-	if IsCorrectSlots then
-		ItemSlotHandler.CorrectSlotNumber(Player)
-	end
-	for i,v in pairs(Equipments:GetChildren()) do
-		local Item = v:GetChildren()
-		for i,v in pairs(Item) do
-			local NewEquipment = ItemDictionaryHandler.ItemToDictionary(v)
-			local Name, Type = ItemDictionaryHandler.IDToName(NewEquipment.ID)
-			if Type == 2 then
-				if tonumber(NewEquipment.CurrentSlot) <= #Consumables:GetChildren() then
-					v.Parent = Consumables:FindFirstChild("Slot_"..tostring(NewEquipment.CurrentSlot))
-				else
-					v.Parent = Bank
-				end
-				ItemSlotHandler.CorrectSlotNumber(Player)
-				table.insert(ConsumablesTable,NewEquipment)
-			elseif Type == 3 then
-				if tonumber(NewEquipment.CurrentSlot) <= #Materials:GetChildren() then
-					v.Parent = Materials:FindFirstChild("Slot_"..tostring(NewEquipment.CurrentSlot))
-				else
-					v.Parent = Bank
-				end
-				ItemSlotHandler.CorrectSlotNumber(Player)
-				table.insert(MaterialsTable,NewEquipment)
-			else
-				table.insert(EquipmentsTable,NewEquipment)
-			end
 
-		end
-	end
-	for i,v in pairs(Materials:GetChildren()) do
-		local Item = v:GetChildren()
-		for i,v in pairs(Item) do
-			local NewMaterial = ItemDictionaryHandler.ItemToDictionary(v)
-			local Name, Type = ItemDictionaryHandler.IDToName(NewMaterial.ID)
-			if Type == 2 then
-				if tonumber(NewMaterial.CurrentSlot) <= #Consumables:GetChildren() then
-					v.Parent = Consumables:WaitForChild("Slot_"..NewMaterial.CurrentSlot)
-				else
-					v.Parent = Bank
-				end
-				ItemSlotHandler.CorrectSlotNumber(Player)
-				table.insert(ConsumablesTable,NewMaterial)
-			elseif Type == 1 then
-				if tonumber(NewMaterial.CurrentSlot) <= #Equipments:GetChildren() then
-					v.Parent = Equipments:WaitForChild("Slot_"..NewMaterial.CurrentSlot)
-				else
-					v.Parent = Bank
-				end
-				ItemSlotHandler.CorrectSlotNumber(Player)
-				table.insert(EquipmentsTable,NewMaterial)
-			else
-				table.insert(MaterialsTable,NewMaterial)
-			end
-		end
-	end
-	for i,v in pairs(Consumables:GetChildren()) do
-		local Item = v:GetChildren()
-		for i,v in pairs(Item) do
-			local NewConsumable = ItemDictionaryHandler.ItemToDictionary(v)
-			local Name, Type = ItemDictionaryHandler.IDToName(NewConsumable.ID)
-			if Type == 3 then
-				if tonumber(NewConsumable.CurrentSlot) <= #Materials:GetChildren() then
-					v.Parent = Materials:WaitForChild("Slot_"..NewConsumable.CurrentSlot)
-				else
-					v.Parent = Bank
-				end
-				ItemSlotHandler.CorrectSlotNumber(Player)
-				table.insert(MaterialsTable,NewConsumable)
-			elseif Type == 1 then
-				if tonumber(NewConsumable.CurrentSlot) <= #Equipments:GetChildren() then
-					v.Parent = Equipments:WaitForChild("Slot_"..NewConsumable.CurrentSlot)
-				else
-					v.Parent = Bank
-				end
-				ItemSlotHandler.CorrectSlotNumber(Player)
-				table.insert(EquipmentsTable,NewConsumable)
-			else
-				table.insert(ConsumablesTable,NewConsumable)
-			end
-		end
-	end
-	for i,v in pairs(Bank:GetChildren()) do
-		local NewItem = ItemDictionaryHandler.ItemToDictionary(v)
-		table.insert(BankTable,NewItem)
-	end
-
-	for i,v in pairs(MainTab:GetChildren()) do
-		if #v:GetChildren() == 1 then
-			for a,b in pairs(v:GetChildren()) do
-				local NewItem = ItemDictionaryHandler.ItemToDictionary(b)
-				EquippedTable[v.Name] = NewItem
-			end
-		elseif #v:GetChildren() > 1 then
-			ItemSlotHandler.CorrectSlotNumber(Player)
-		end
-	end
-	for i,v in pairs(AccessoryTab:GetChildren()) do
-		if #v:GetChildren() == 1 then
-			for a,b in pairs(v:GetChildren()) do
-				local NewItem = ItemDictionaryHandler.ItemToDictionary(b)
-				local _,numbvalue = string.match(v.Name,StringConverterPattern)
-				print(numbvalue,b)
-				EquippedTable.Accessory["Slot"..numbvalue] = NewItem
-			end
-		elseif #v:GetChildren() > 1 then
-			ItemSlotHandler.CorrectSlotNumber(Player)
-		end
-	end
-	for i,v in pairs(BowTab:GetChildren()) do
-		if #v:GetChildren() == 1 then
-			for a,b in pairs(v:GetChildren()) do
-				local NewItem = ItemDictionaryHandler.ItemToDictionary(b)
-				local _,numbvalue = string.match(v.Name,StringConverterPattern)
-				print(numbvalue,b)
-				EquippedTable.Bow["Slot"..numbvalue] = NewItem
-			end
-		elseif #v:GetChildren() > 1 then
-			ItemSlotHandler.CorrectSlotNumber(Player)
-		end
-	end
-	for i,v in pairs(FishingTab:GetChildren()) do
-		if #v:GetChildren() == 1 then
-			for a,b in pairs(v:GetChildren()) do
-				local NewItem = ItemDictionaryHandler.ItemToDictionary(b)
-				local _,numbvalue = string.match(v.Name,StringConverterPattern)
-				print(numbvalue,b)
-				EquippedTable.Fishing["Slot"..numbvalue] = NewItem
-			end
-		elseif #v:GetChildren() > 1 then
-			ItemSlotHandler.CorrectSlotNumber(Player)
-		end
-	end
-	--for i,v in pairs(FishingTab:GetChildren()) do
-	--	if #v:GetChildren() == 1 then
-	--		for a,b in pairs(v:GetChildren()) do
-	--			local NewItem = ItemDictionaryHandler.ItemToDictionary(b)
-	--			local _,numbvalue = string.match(v.Name,StringConverterPattern)
-	--			print(numbvalue,b)
-	--			EquippedTable.Accessory["Slot"..numbvalue] = NewItem
-	--		end
-	--	elseif #v:GetChildren() > 1 then
-	--		ItemSlotHandler.CorrectSlotNumber(Player)
-	--	end
-	--end
-	print(EquippedTable)
-	return EquipmentsTable, ConsumablesTable, MaterialsTable, BankTable, EquippedTable
+-- Optimized slot correction function with better error handling
+local function processInventorySlots(container, occupiedSlots, emptySlots, isStackable)
+    if not container then
+        warn("[ItemSlotHandler]: processInventorySlots - Invalid container")
+        return
+    end
+    
+    for _, slot in pairs(container:GetChildren()) do
+        local itemCount = #slot:GetChildren()
+        local _, slotNumber = string.match(slot.Name, STRING_PATTERN)
+        slotNumber = tonumber(slotNumber)
+        
+        if not slotNumber then
+            warn("[ItemSlotHandler]: Invalid slot name format:", slot.Name)
+            continue
+        end
+        
+        if itemCount >= 2 then
+            -- Move excess items to occupied list
+            local itemsToMove = {}
+            for i, item in pairs(slot:GetChildren()) do
+                if i > 1 then
+                    table.insert(itemsToMove, item)
+                else
+                    item:SetAttribute("CurrentSlot", slotNumber)
+                end
+            end
+            
+            for _, item in pairs(itemsToMove) do
+                local success, newItem = pcall(ItemConverter.ItemToDictionary, item)
+                if success and newItem then
+                    table.insert(occupiedSlots, newItem)
+                    item:Destroy()
+                else
+                    warn("[ItemSlotHandler]: Failed to convert item to dictionary:", item.Name)
+                end
+            end
+            
+        elseif itemCount == 1 then
+            local item = slot:GetChildren()[1]
+            
+            -- Handle stackable items
+            if isStackable then
+                local itemContainer = StorageContainers[isStackable]
+                local itemModule = itemContainer and itemContainer:FindFirstChild(item.Name)
+                
+                if itemModule then
+                    local success, itemData = pcall(require, itemModule)
+                    if success and itemData and itemData.Stackable then
+                        local amounts = item:GetAttribute("Amounts") or 1
+                        
+                        while amounts > itemData.StackSize do
+                            amounts = amounts - itemData.StackSize
+                            local convertSuccess, newItem = pcall(ItemConverter.ItemToDictionary, item)
+                            if convertSuccess and newItem then
+                                newItem.Amounts = itemData.StackSize
+                                table.insert(occupiedSlots, newItem)
+                            end
+                        end
+                        
+                        if amounts <= 0 then
+                            item:Destroy()
+                        else
+                            item:SetAttribute("Amounts", amounts)
+                            item:SetAttribute("CurrentSlot", slotNumber)
+                        end
+                    else
+                        item:SetAttribute("CurrentSlot", slotNumber)
+                    end
+                else
+                    item:SetAttribute("CurrentSlot", slotNumber)
+                end
+            else
+                item:SetAttribute("CurrentSlot", slotNumber)
+            end
+            
+        else
+            table.insert(emptySlots, slotNumber)
+        end
+    end
 end
-function ItemSlotHandler.GetSlotsv2(Player,CorrectSlots,Mode)
-	local function processItems(container, tables)
-		for _, slot in ipairs(container:GetChildren()) do
-			for _, item in ipairs(slot:GetChildren()) do
-				local newItem = ItemDictionaryHandler.ItemToDictionary(item)
-				local _, itemType = ItemDictionaryHandler.IDToName(newItem.ID)
 
-				local targetContainer, targetTable = tables[itemType].container, tables[itemType].table
-
-				if targetContainer ~= container then
-					local newSlot = tonumber(newItem.CurrentSlot)
-					if newSlot and newSlot <= #targetContainer:GetChildren() then
-						item.Parent = targetContainer:FindFirstChild("Slot_" .. newSlot)
-					else
-						item.Parent = Player.Bank
-					end
-					ItemSlotHandler.CorrectSlotNumber(Player)
-				end
-
-				table.insert(targetTable, newItem)
-			end
-		end
-	end
-
-	local function processEquippedItems(container, targetTable)
-		for _, slot in ipairs(container:GetChildren()) do
-			if #slot:GetChildren() == 1 then
-				local item = slot:GetChildren()[1]
-				local newItem = ItemDictionaryHandler.ItemToDictionary(item)
-				local _, slotNumber = string.match(slot.Name, StringConverterPattern)
-				targetTable[slot.Name] = newItem
-			elseif #slot:GetChildren() > 1 then
-				ItemSlotHandler.CorrectSlotNumber(Player)
-			end
-		end
-	end
-
-	local Inventory = Player:WaitForChild("Inventory")
-	local Equipped = Inventory:WaitForChild("Equipped")
-
-	local tables = {
-		[1] = {container = Inventory:WaitForChild("Equipments"), table = {}},
-		[2] = {container = Inventory:WaitForChild("Consumables"), table = {}},
-		[3] = {container = Inventory:WaitForChild("Materials"), table = {}}
-	}
-
-	local EquippedTable = CopyTable.Copy(EquippedFormat)
-	local BankTable = {}
-	local equippedContainers = {
-		{container = Equipped:WaitForChild("Main"), target = EquippedTable},
-		{container = Equipped:WaitForChild("Accessory"), target = EquippedTable.Accessory},
-		{container = Equipped:WaitForChild("Bow"), target = EquippedTable.Bow},
-		{container = Equipped:WaitForChild("Fishing"), target = EquippedTable.Fishing}
-	}
-	
-	if CorrectSlots then
-		ItemSlotHandler.CorrectSlotNumber(Player)
-	end
-	if Mode == 1 then
-		for _, containerInfo in pairs(tables) do
-			processItems(containerInfo.container, tables)
-		end
-
-		for _, item in ipairs(Player.Bank:GetChildren()) do
-			table.insert(BankTable, ItemDictionaryHandler.ItemToDictionary(item))
-		end
-
-		for _, containerInfo in ipairs(equippedContainers) do
-			processEquippedItems(containerInfo.container, containerInfo.target)
-		end
-
-		return tables[1].table, tables[2].table, tables[3].table, BankTable, EquippedTable
-	elseif Mode == 2 then
-		processItems(Inventory:WaitForChild("Equipments"), tables)
-		return tables[1].table
-	elseif Mode == 3 then
-		processItems(Inventory:WaitForChild("Consumables"), tables)
-		return tables[2].table
-	elseif Mode == 4 then
-		processItems(Inventory:WaitForChild("Materials"), tables)
-		return tables[3].table
-	elseif Mode == 5 then
-		for _, item in ipairs(Player.Bank:GetChildren()) do
-			table.insert(BankTable, ItemDictionaryHandler.ItemToDictionary(item))
-		end
-		return BankTable
-	elseif Mode == 6 then
-		for _, containerInfo in ipairs(equippedContainers) do
-			processEquippedItems(containerInfo.container, containerInfo.target)
-		end
-		return EquippedTable
-	end
-	
+-- Main correction function with improved error handling
+function ItemSlotHandler.CorrectSlotNumber(Player, Mode)
+    if not Player or not Player.Parent then
+        warn("[ItemSlotHandler]: Invalid player in CorrectSlotNumber")
+        return false
+    end
+    
+    local selectedMode = Mode or 1
+    local inventory = getPlayerInventory(Player)
+    if not inventory then return false end
+    
+    local function redistributeItems(container, occupiedItems, emptySlots)
+        for _, itemDict in pairs(occupiedItems) do
+            if #emptySlots == 0 then
+                local success = pcall(ItemConverter.DictionaryToItem, itemDict, inventory.Bank)
+                if not success then
+                    warn("[ItemSlotHandler]: Failed to move item to bank")
+                end
+            else
+                local _, lowestSlot = getLowest(emptySlots)
+                if lowestSlot then
+                    local newSlot = container:FindFirstChild("Slot_" .. tostring(lowestSlot))
+                    if newSlot then
+                        itemDict.CurrentSlot = lowestSlot
+                        local success = pcall(ItemConverter.DictionaryToItem, itemDict, newSlot)
+                        if success then
+                            -- Remove used slot from empty slots
+                            for i, slot in pairs(emptySlots) do
+                                if slot == lowestSlot then
+                                    table.remove(emptySlots, i)
+                                    break
+                                end
+                            end
+                        else
+                            warn("[ItemSlotHandler]: Failed to place item in slot", lowestSlot)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Process different inventory types based on mode
+    if selectedMode == 1 or selectedMode == 2 then -- Equipments
+        local occupiedEquipments, emptyEquipmentSlots = {}, {}
+        processInventorySlots(inventory.Equipments, occupiedEquipments, emptyEquipmentSlots, false)
+        redistributeItems(inventory.Equipments, occupiedEquipments, emptyEquipmentSlots)
+    end
+    
+    if selectedMode == 1 or selectedMode == 3 then -- Consumables
+        local occupiedConsumables, emptyConsumableSlots = {}, {}
+        processInventorySlots(inventory.Consumables, occupiedConsumables, emptyConsumableSlots, ITEM_TYPES.CONSUMABLE)
+        redistributeItems(inventory.Consumables, occupiedConsumables, emptyConsumableSlots)
+    end
+    
+    if selectedMode == 1 or selectedMode == 4 then -- Materials
+        local occupiedMaterials, emptyMaterialSlots = {}, {}
+        processInventorySlots(inventory.Materials, occupiedMaterials, emptyMaterialSlots, ITEM_TYPES.MATERIAL)
+        redistributeItems(inventory.Materials, occupiedMaterials, emptyMaterialSlots)
+    end
+    
+    if selectedMode == 1 or selectedMode == 5 then -- Equipped items
+        local equippedContainers = {inventory.MainTab, inventory.BowTab, inventory.FishingTab, inventory.AccessoryTab}
+        
+        for _, container in pairs(equippedContainers) do
+            for _, slot in pairs(container:GetChildren()) do
+                local itemCount = #slot:GetChildren()
+                
+                if itemCount >= 2 then
+                    -- Move excess equipped items back to inventory
+                    for i, item in pairs(slot:GetChildren()) do
+                        if i > 1 then
+                            item:SetAttribute("CurrentSlot", 0)
+                            local success, newEquipped = pcall(ItemConverter.ItemToDictionary, item)
+                            if success and newEquipped then
+                                item:Destroy()
+                                ItemSlotHandler.MoveToSlot(Player, newEquipped)
+                            end
+                        else
+                            item:SetAttribute("CurrentSlot", -1)
+                        end
+                    end
+                elseif itemCount == 1 then
+                    slot:GetChildren()[1]:SetAttribute("CurrentSlot", -1)
+                end
+            end
+        end
+    end
+    
+    if selectedMode == 6 then -- Bank
+        for _, item in pairs(inventory.Bank:GetChildren()) do
+            item:SetAttribute("CurrentSlot", 0)
+        end
+    end
+    
+    return true
 end
---function ItemSlotHandler.GetSlotsNew(Player,CorrectSlots,Mode)
---	local function processItems(container, targetTable, containerType)
---		for _, slot in ipairs(container:GetChildren()) do
---			for _, item in ipairs(slot:GetChildren()) do
---				local newItem = ItemDictionaryHandler.ItemToDictionary(item)
---				local _, itemType = ItemDictionaryHandler.IDToName(newItem.ID)
 
---				if itemType ~= containerType then
---					local targetContainer = itemType == 1 and Inventory.Equipments
---						or itemType == 2 and Inventory.Consumables
---						or itemType == 3 and Inventory.Materials
---						or Bank
-
---					if targetContainer ~= Bank and tonumber(newItem.CurrentSlot) <= #targetContainer:GetChildren() then
---						item.Parent = targetContainer:FindFirstChild("Slot_" .. tostring(newItem.CurrentSlot))
---					else
---						item.Parent = Bank
---					end
---					ItemSlotHandler.CorrectSlotNumber(Player)
---				end
-
---				table.insert(targetTable, newItem)
---			end
---		end
---	end
-
---	local function processEquippedItems(container, targetTable)
---		for _, slot in ipairs(container:GetChildren()) do
---			if #slot:GetChildren() == 1 then
---				local item = slot:GetChildren()[1]
---				local newItem = ItemDictionaryHandler.ItemToDictionary(item)
---				local _, slotNumber = string.match(slot.Name, StringConverterPattern)
---				targetTable[slot.Name] = newItem
---			elseif #slot:GetChildren() > 1 then
---				ItemSlotHandler.CorrectSlotNumber(Player)
---			end
---		end
---	end
-
---	local Inventory = Player:WaitForChild("Inventory")
---	local Bank = Player:WaitForChild("Bank")
---	local Equipped = Inventory:WaitForChild("Equipped")
-
---	local EquipmentsTable, ConsumablesTable, MaterialsTable = {}, {}, {}
---	local EquippedTable = CopyTable.Copy(EquippedFormat)
---	local BankTable = {}
-
---	if CorrectSlots then
---		ItemSlotHandler.CorrectSlotNumber(Player)
---	end
-
---	processItems(Inventory.Equipments, EquipmentsTable, 1)
---	processItems(Inventory.Consumables, ConsumablesTable, 2)
---	processItems(Inventory.Materials, MaterialsTable, 3)
-
---	for _, item in ipairs(Bank:GetChildren()) do
---		table.insert(BankTable, ItemDictionaryHandler.ItemToDictionary(item))
---	end
-
---	processEquippedItems(Equipped.Main, EquippedTable)
---	processEquippedItems(Equipped.Accessory, EquippedTable.Accessory)
---	processEquippedItems(Equipped.Bow, EquippedTable.Bow)
---	processEquippedItems(Equipped.Fishing, EquippedTable.Fishing)
-
---	return EquipmentsTable, ConsumablesTable, MaterialsTable, BankTable, EquippedTable
---end
-
-function ItemSlotHandler.MoveToSlot(Player,Dictionary,IsBank)
-	local Bank = Player:WaitForChild("Bank")
-	local Inventory = Player:WaitForChild("Inventory")
-	local Equipments = Inventory:WaitForChild("Equipments")
-	local Consumables = Inventory:WaitForChild("Consumables")
-	local Materials = Inventory:WaitForChild("Materials")
-	local Name,Type = ItemDictionaryHandler.IDToName(Dictionary.ID)
-	if IsBank == true then
-		ItemDictionaryHandler.DictionaryToItem(Dictionary,Bank)
-	else
-		if Type == 1 and tonumber(Dictionary.CurrentSlot) <= 25 and tonumber(Dictionary.CurrentSlot) >= 1 then
-			--local NewSlot = Equipments:WaitForChild("Slot_"..Dictionary.CurrentSlot)
-			--ItemDictionaryHandler.DictionaryToItem(Dictionary,NewSlot)
-			ItemDictionaryHandler.DictionaryToItem(Dictionary,Equipments:WaitForChild("Slot_"..Dictionary.CurrentSlot))
-		elseif Type == 2 and tonumber(Dictionary.CurrentSlot) <= 36 and tonumber(Dictionary.CurrentSlot) >= 1  then
-			--local NewSlot = Consumables:WaitForChild("Slot_"..Dictionary.CurrentSlot)
-			--ItemDictionaryHandler.DictionaryToItem(Dictionary,NewSlot)
-			ItemDictionaryHandler.DictionaryToItem(Dictionary,Consumables:WaitForChild("Slot_"..Dictionary.CurrentSlot))
-		elseif Type == 3 and tonumber(Dictionary.CurrentSlot) <= 36 and tonumber(Dictionary.CurrentSlot) >= 1  then
-			--local NewSlot = Materials:WaitForChild("Slot_"..Dictionary.CurrentSlot)
-			--ItemDictionaryHandler.DictionaryToItem(Dictionary,NewSlot)
-			ItemDictionaryHandler.DictionaryToItem(Dictionary,Materials:WaitForChild("Slot_"..Dictionary.CurrentSlot))
-			
-		else
-			Dictionary.CurrentSlot = 0
-			ItemDictionaryHandler.DictionaryToItem(Dictionary,Bank)
-		end
-	end
+-- Optimized GetSlots function with better error handling
+function ItemSlotHandler.GetSlots(Player, CorrectSlots, Mode)
+    if not Player or not Player.Parent then
+        warn("[ItemSlotHandler]: Invalid player in GetSlots")
+        return nil
+    end
+    
+    local inventory = getPlayerInventory(Player)
+    if not inventory then return nil end
+    
+    if CorrectSlots then
+        ItemSlotHandler.CorrectSlotNumber(Player)
+    end
+    
+    local function processContainerItems(container)
+        local items = {}
+        if not container then return items end
+        
+        for _, slot in pairs(container:GetChildren()) do
+            for _, item in pairs(slot:GetChildren()) do
+                local success, newItem = pcall(ItemConverter.ItemToDictionary, item)
+                if success and newItem then
+                    table.insert(items, newItem)
+                else
+                    warn("[ItemSlotHandler]: Failed to process item in slot:", slot.Name)
+                end
+            end
+        end
+        return items
+    end
+    
+    local function processEquippedItems()
+        local equippedTable = CopyTable.Copy(EquippedFormat)
+        
+        -- Process main equipped items
+        for _, slot in pairs(inventory.MainTab:GetChildren()) do
+            if #slot:GetChildren() == 1 then
+                local item = slot:GetChildren()[1]
+                local success, newItem = pcall(ItemConverter.ItemToDictionary, item)
+                if success and newItem then
+                    equippedTable[slot.Name] = newItem
+                end
+            end
+        end
+        
+        -- Process accessory, bow, and fishing slots
+        local specialTabs = {
+            {container = inventory.AccessoryTab, target = equippedTable.Accessory},
+            {container = inventory.BowTab, target = equippedTable.Bow},
+            {container = inventory.FishingTab, target = equippedTable.Fishing}
+        }
+        
+        for _, tabInfo in pairs(specialTabs) do
+            if tabInfo.container and tabInfo.target then
+                for _, slot in pairs(tabInfo.container:GetChildren()) do
+                    if #slot:GetChildren() == 1 then
+                        local item = slot:GetChildren()[1]
+                        local success, newItem = pcall(ItemConverter.ItemToDictionary, item)
+                        if success and newItem then
+                            local _, slotNumber = string.match(slot.Name, STRING_PATTERN)
+                            if slotNumber then
+                                tabInfo.target["Slot" .. slotNumber] = newItem
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        
+        return equippedTable
+    end
+    
+    -- Return based on mode
+    if Mode == 1 then -- All
+        return processContainerItems(inventory.Equipments),
+               processContainerItems(inventory.Consumables),
+               processContainerItems(inventory.Materials),
+               processContainerItems(inventory.Bank),
+               processEquippedItems()
+    elseif Mode == 2 then -- Equipment only
+        return processContainerItems(inventory.Equipments)
+    elseif Mode == 3 then -- Consumables only
+        return processContainerItems(inventory.Consumables)
+    elseif Mode == 4 then -- Materials only
+        return processContainerItems(inventory.Materials)
+    elseif Mode == 5 then -- Bank only
+        return processContainerItems(inventory.Bank)
+    elseif Mode == 6 then -- Equipped only
+        return processEquippedItems()
+    end
 end
-function ItemSlotHandler.GetEmptySlots(Player,Mode,Order)
-	local Bank = Player:WaitForChild("Bank")
-	local Inventory = Player:WaitForChild("Inventory")
-	local Equipments = Inventory:WaitForChild("Equipments")
-	local Consumables = Inventory:WaitForChild("Consumables")
-	local Materials = Inventory:WaitForChild("Materials")
-	local Equipped = Inventory:WaitForChild("Equipped")
-	local MainTab = Equipped:WaitForChild("Main")
-	local AccessoryTab = Equipped:WaitForChild("Accessory")
-	local FishingTab = Equipped:WaitForChild("Fishing")
-	local BowTab = Equipped:WaitForChild("Bow")
-	local EmptyEquipmentSlot = {}
-	local EmptyMaterialSlot = {}
-	local EmptyConsumableSlot = {}
-	local EmptyEquippedMainSlot = {}
-	local EmptyEquippedAccessorySlot = {}
-	local EmptyEquippedFishingSlot = {}
-	local EmptyEquippedBowSlot = {}
-	local EmptyAllSlot = {
-		EquipmentSlots = {},
-		ConsumableSlots = {},
-		MaterialSlots = {}
-	}
-	for i = 1,#Materials:GetChildren() do
-		if i <= #Equipments:GetChildren() then
-			local EquipmentsNumber = #Equipments:FindFirstChild("Slot_"..i):GetChildren()
-			if EquipmentsNumber < 1 then
-				table.insert(EmptyEquipmentSlot,i)
-				table.insert(EmptyAllSlot.EquipmentSlots,i)
-			end
-		end
-		local ConsumablesNumber = #Consumables:FindFirstChild("Slot_"..i):GetChildren()
-		local MaterialsNumber = #Materials:FindFirstChild("Slot_"..i):GetChildren()
-		if ConsumablesNumber < 1 then
-			table.insert(EmptyConsumableSlot,i)
-			table.insert(EmptyAllSlot.ConsumableSlots,i)
-		end
-		if MaterialsNumber < 1 then
-			table.insert(EmptyMaterialSlot,i)
-			table.insert(EmptyAllSlot.MaterialSlots,i)
-		end
-	end
-	for i,v in pairs(MainTab:GetChildren()) do
-		if #v:GetChildren() == 0 then
-			table.insert(EmptyEquippedMainSlot,v.Name)
-		end
-	end
-	for i,v in pairs(AccessoryTab:GetChildren()) do
-		if #v:GetChildren() == 0 then
-			local slot,slotnumber = string.match(v.Name,StringConverterPattern)
-			table.insert(EmptyEquippedAccessorySlot,slotnumber)
-		end
-	end
-	for i,v in pairs(FishingTab:GetChildren()) do
-		if #v:GetChildren() == 0 then
-			local slot,slotnumber = string.match(v.Name,StringConverterPattern)
-			table.insert(EmptyEquippedFishingSlot,slotnumber)
-		end
-	end
-	for i,v in pairs(BowTab:GetChildren()) do
-		if #v:GetChildren() == 0 then
-			local slot,slotnumber = string.match(v.Name,StringConverterPattern)
-			table.insert(EmptyEquippedBowSlot,slotnumber)
-		end
-	end
-	if Mode == 1 then
-		if #EmptyEquipmentSlot == 0 then
-			return false
-		else
-			if Order == "GetLowest" then
-				local Index, Value = getLowest(EmptyEquipmentSlot)
-				if Index == nil and Value == nil then
-					return false
-				end
-				return true,Value
-			elseif Order == "GetHighest" then
-				local Index, Value = getHighest(EmptyEquipmentSlot)
-				if Index == nil and Value == nil then
-					return false
-				end
-				return true,Value
-			else
-				return true,EmptyEquipmentSlot
-			end
-		end
-	elseif Mode == 2 then
-		if #EmptyConsumableSlot == 0 then
-			return false
-		else
-			if Order == "GetLowest" then
-				local Index, Value = getLowest(EmptyConsumableSlot)
-				if Index == nil and Value == nil then
-					return false
-				end
-				return true,Value
-			elseif Order == "GetHighest" then
-				local Index, Value = getHighest(EmptyConsumableSlot)
-				if Index == nil and Value == nil then
-					return false
-				end
-				return true,Value
-			else
-				return true,EmptyConsumableSlot
-			end
-		end
-	elseif Mode == 3 then
-		if #EmptyMaterialSlot == 0 then
-			return false
-		else
-			if Order == "GetLowest" then
-				local Index, Value = getLowest(EmptyMaterialSlot)
-				if Index == nil and Value == nil then
-					return false
-				end
-				return true,Value
-			elseif Order == "GetHighest" then
-				local Index, Value = getHighest(EmptyMaterialSlot)
-				if Index == nil and Value == nil then
-					return false
-				end
-				return true,Value
-			else
-				return true,EmptyMaterialSlot
-			end
-		end
-	elseif Mode == 5 then
-		return EmptyEquippedMainSlot, EmptyEquippedAccessorySlot, EmptyEquippedFishingSlot, EmptyEquippedBowSlot
-	else 
-		if #EmptyAllSlot.EquipmentSlots == 0 and #EmptyAllSlot.ConsumableSlots == 0 and #EmptyAllSlot.MaterialSlots == 0 then
-			return false, EmptyEquipmentSlot, EmptyConsumableSlot, EmptyMaterialSlot
-		else
-			if Order == "GetLowest" then
-				local EIndex, EValue = getLowest(EmptyEquipmentSlot)
-				if EIndex == nil and EValue == nil then
-					EmptyEquipmentSlot = {}
-				else
-					EmptyEquipmentSlot = EValue
-				end
-				local CIndex, CValue = getLowest(EmptyConsumableSlot)
-				if CIndex == nil and CValue == nil then
-					EmptyConsumableSlot = {}
-				else
-					EmptyConsumableSlot = CValue
-				end
-				local MIndex, MValue = getLowest(EmptyMaterialSlot)
-				if MIndex == nil and MValue == nil then
-					EmptyMaterialSlot = {}
-				else
-					EmptyMaterialSlot = MValue
-				end
-				return true, EmptyEquipmentSlot, EmptyConsumableSlot, EmptyMaterialSlot
-			elseif Order == "GetHighest" then
-				local EIndex, EValue = getHighest(EmptyEquipmentSlot)
-				if EIndex == nil and EValue == nil then
-					EmptyEquipmentSlot = {}
-				else
-					EmptyEquipmentSlot = EValue
-				end
-				local CIndex, CValue = getHighest(EmptyConsumableSlot)
-				if CIndex == nil and CValue == nil then
-					EmptyConsumableSlot = {}
-				else
-					EmptyConsumableSlot = CValue
-				end
-				local MIndex, MValue = getHighest(EmptyMaterialSlot)
-				if MIndex == nil and MValue == nil then
-					EmptyMaterialSlot = {}
-				else
-					EmptyMaterialSlot = MValue
-				end
-				return true, EmptyEquipmentSlot, EmptyConsumableSlot, EmptyMaterialSlot
-			else
-				return true, EmptyEquipmentSlot, EmptyConsumableSlot, EmptyMaterialSlot
-			end	
-		end
-	end
+
+-- Improved MoveToSlot function
+function ItemSlotHandler.MoveToSlot(Player, Dictionary, IsBank)
+    if not Player or not Player.Parent then
+        warn("[ItemSlotHandler]: Invalid player in MoveToSlot")
+        return false
+    end
+    
+    if not Dictionary or not Dictionary.ID then
+        warn("[ItemSlotHandler]: Invalid dictionary in MoveToSlot")
+        return false
+    end
+    
+    local inventory = getPlayerInventory(Player)
+    if not inventory then return false end
+    
+    local _, itemType = ItemConverter.IDToName(Dictionary.ID)
+    if not itemType then
+        warn("[ItemSlotHandler]: Invalid item ID in MoveToSlot:", Dictionary.ID)
+        return false
+    end
+    
+    if IsBank then
+        local success = pcall(ItemConverter.DictionaryToItem, Dictionary, inventory.Bank)
+        return success
+    end
+    
+    local currentSlot = tonumber(Dictionary.CurrentSlot)
+    local targetContainer, slotLimit
+    
+    if itemType == ITEM_TYPES.EQUIPMENT then
+        targetContainer = inventory.Equipments
+        slotLimit = SLOT_LIMITS.Equipment
+    elseif itemType == ITEM_TYPES.CONSUMABLE then
+        targetContainer = inventory.Consumables
+        slotLimit = SLOT_LIMITS.Consumable
+    elseif itemType == ITEM_TYPES.MATERIAL then
+        targetContainer = inventory.Materials
+        slotLimit = SLOT_LIMITS.Material
+    else
+        Dictionary.CurrentSlot = 0
+        local success = pcall(ItemConverter.DictionaryToItem, Dictionary, inventory.Bank)
+        return success
+    end
+    
+    if currentSlot and currentSlot >= 1 and currentSlot <= slotLimit then
+        local targetSlot = targetContainer:FindFirstChild("Slot_" .. currentSlot)
+        if targetSlot then
+            local success = pcall(ItemConverter.DictionaryToItem, Dictionary, targetSlot)
+            return success
+        end
+    end
+    
+    -- Fallback to bank
+    Dictionary.CurrentSlot = 0
+    local success = pcall(ItemConverter.DictionaryToItem, Dictionary, inventory.Bank)
+    return success
 end
-function ItemSlotHandler.EquipItem(Player,SelectedSlot,EquipSlot,IsSwap)
-	local Name, Number = string.match(SelectedSlot,StringConverterPattern)
-	local EquipSlotName,EquipSlotNumber = string.match(EquipSlot,StringConverterPattern)
-	local Bank = Player:WaitForChild("Bank")
-	local Inventory = Player:WaitForChild("Inventory")
-	local Equipped = Inventory:WaitForChild("Equipped")
-	local MainTab = Equipped:WaitForChild("Main")
-	local AccessoryTab = Equipped:WaitForChild("Accessory")
-	local Equipments = Inventory:WaitForChild("Equipments")
-	local Consumables = Inventory:WaitForChild("Consumables")
-	local Materials = Inventory:WaitForChild("Materials")
-	local SwapSlot 
-	local WillSwap = false
-	local EquippingType
-	local Slot
-	print(Name)
-	print(Number)
-	local Main,Accessory = ItemSlotHandler.GetEmptySlots(Player,5)
-	print(Main)
-	print(Accessory)
-	if Name ~= nil and Number ~= nil then
-		if Name == "Equipments" then
-			Slot = Equipments:FindFirstChild("Slot_"..Number)
-			SwapSlot = Name.."_"..Number
-		elseif Name == "Consumables" then
-			Slot = Consumables:FindFirstChild("Slot_"..Number)
-			SwapSlot = Name.."_"..Number
-		else
-			return false,"Not Accepting material or selectedslot is ????"
-		end
-	else return false,"Cannot find SelectedSlot"
-	end
-	if #Slot:GetChildren() ~= 1 then
-		return false, "Slot is Empty/not as 1" 
-	end
-	local ItemName,ItemType,ItemSubType = ItemDictionaryHandler.IDToName(Slot:FindFirstChildOfClass("NumberValue").Value)
-	if EquipSlotName == "Accessory"  and EquipSlotNumber ~= nil then
-		if Name ~= "Equipments" and ItemSubType ~= "Accessory" then return false,"Cannot equip item to that accessory slot.." end
-		if Accessory ~= nil then
-			if table.find(Accessory,EquipSlotNumber) == nil and table.find(EquippedTab.Accessory,"Slot"..EquipSlotNumber) and IsSwap == true then
-				if IsSwap == true then
-					WillSwap = true
-				else return false, "Slot is occupied"
-				end
-			elseif table.find(Accessory,EquipSlotNumber) ~= nil and not table.find(EquippedTab.Accessory,"Slot"..EquipSlotNumber) then
-				return false, "Given slot is nil"
-			end
-			EquippingType = 2
-		else
-			return false,"AccessoryTable is nil?"
-		end
-	elseif EquipSlotName == nil and EquipSlotNumber == nil and table.find(EquippedTab,EquipSlot) then
-		if Main then
-			if not table.find(Main,EquipSlot) and ItemSubType ~= "Accessory" then
-				print("eeeee")
-				print(IsSwap)
-				if IsSwap == true then
-					WillSwap = true
-					print(WillSwap)
 
-				else return false, "Slot is occupied"
-				end
-			end
-			EquippingType = 1
-		else
-			return false,"MainTable is nil?"
-		end
-	else
-		return false,"EquipSlot is nil?"
-	end
-
-	if #Slot:GetChildren() == 1 then
-		for i,v in pairs(Slot:GetChildren()) do
-			v:SetAttribute("CurrentSlot",-1)
-			local NewItem = ItemDictionaryHandler.ItemToDictionary(v)
-			if EquippingType == 1 then
-				local IfSuccess, Reason = pcall(function()
-					MainTab:FindFirstChild(EquipSlot)
-				end)
-				if IfSuccess == true then
-					print(WillSwap)
-					print(table.find(WeaponType,"xd"))
-					local NewSlot = MainTab:FindFirstChild(EquipSlot)
-					if WillSwap == true then
-						local a,b
-						if table.find(WeaponType,ItemSubType) ~= nil and NewSlot.Name ~= "Pet" and NewSlot.Name ~= "Chestplates" and NewSlot.Name ~= "Boots" and NewSlot.Name ~= "Helmet" then
-							print("this could be?")
-							a,b = ItemSlotHandler.SwapSlots(Player,SwapSlot,NewSlot.Name)
-						elseif ItemSubType == "Aura" and NewSlot.Name == "Aura" then
-							a,b = ItemSlotHandler.SwapSlots(Player,SwapSlot,NewSlot.Name)
-						elseif ItemSubType == "Chestplate" and NewSlot.Name == "Chestplate" then
-							a,b = ItemSlotHandler.SwapSlots(Player,SwapSlot,NewSlot.Name)
-						elseif ItemSubType == "Helmet" and NewSlot.Name == "Helmet" then
-							a,b = ItemSlotHandler.SwapSlots(Player,SwapSlot,NewSlot.Name)
-						elseif ItemSubType == "Boots" and NewSlot.Name == "Boots" then
-							a,b = ItemSlotHandler.SwapSlots(Player,SwapSlot,NewSlot.Name)
-						else return false,"wrong type"
-						end
-
-						return a,b
-					else
-						print(table.find(WeaponType,"xd"))
-						print(table.find(WeaponType,ItemSubType))
-						if (table.find(WeaponType,ItemSubType) == 1 or table.find(WeaponType,ItemSubType) == 4)  and NewSlot.Name == "Offhand"  then
-							print("L856")
-							ItemDictionaryHandler.DictionaryToItem(NewItem,NewSlot)
-							v:Destroy()
-						elseif table.find(WeaponType,ItemSubType) ~= nil and NewSlot.Name == "Weapon" then
-							ItemDictionaryHandler.DictionaryToItem(NewItem,NewSlot)
-							v:Destroy()
-						elseif ItemSubType == "Aura" and NewSlot.Name == "Aura" then
-							ItemDictionaryHandler.DictionaryToItem(NewItem,NewSlot)
-							v:Destroy()
-						elseif ItemSubType == "Chestplate" and NewSlot.Name == "Chestplate" then
-							ItemDictionaryHandler.DictionaryToItem(NewItem,NewSlot)
-							v:Destroy()
-						elseif ItemSubType == "Helmet" and NewSlot.Name == "Helmet" then
-							ItemDictionaryHandler.DictionaryToItem(NewItem,NewSlot)
-							v:Destroy()
-						elseif ItemSubType == "Boots" and NewSlot.Name == "Boots" then
-							ItemDictionaryHandler.DictionaryToItem(NewItem,NewSlot)
-							v:Destroy()
-						else return false,"wrong type"
-						end
-
-						return true, "Equipped Item!"
-					end
-				else
-					return false, "EquipSlot is Nil"
-				end
-			elseif EquippingType == 2 then
-				local IfSuccess, Reason = pcall(function()
-					AccessoryTab:FindFirstChild("AccessorySlot_"..EquipSlotNumber)
-				end)
-				if IfSuccess == true then
-					local NewSlot = AccessoryTab:FindFirstChild("AccessorySlot_"..EquipSlotNumber)
-					print(NewSlot)
-					print(WillSwap)
-					if WillSwap == true then
-						local a,b = ItemSlotHandler.SwapSlots(Player,SwapSlot,"Accessory_"..EquipSlotNumber)
-						return a,b
-					else
-						ItemDictionaryHandler.DictionaryToItem(NewItem,NewSlot)
-						v:Destroy()
-						return true, "Equipped Item!"
-					end
-				else
-					return false, "Given Slot is Nil"
-				end
-			else return false, "cannot get equippingtype"
-			end
-		end
-	end
+-- Optimized GetEmptySlots function
+function ItemSlotHandler.GetEmptySlots(Player, Mode, Order)
+    if not Player or not Player.Parent then
+        warn("[ItemSlotHandler]: Invalid player in GetEmptySlots")
+        return false
+    end
+    
+    local inventory = getPlayerInventory(Player)
+    if not inventory then return false end
+    
+    local function getEmptySlotsForContainer(container)
+        local emptySlots = {}
+        if not container then return emptySlots end
+        
+        for i, slot in pairs(container:GetChildren()) do
+            if #slot:GetChildren() == 0 then
+                local _, slotNumber = string.match(slot.Name, STRING_PATTERN)
+                local num = tonumber(slotNumber)
+                if num then
+                    table.insert(emptySlots, num)
+                end
+            end
+        end
+        return emptySlots
+    end
+    
+    local function processOrder(slots, order)
+        if #slots == 0 then return false end
+        
+        if order == "GetLowest" then
+            local _, value = getLowest(slots)
+            return value and true or false, value
+        elseif order == "GetHighest" then
+            local _, value = getHighest(slots)
+            return value and true or false, value
+        else
+            return true, slots
+        end
+    end
+    
+    if Mode == 1 then -- Equipment slots
+        local emptySlots = getEmptySlotsForContainer(inventory.Equipments)
+        return processOrder(emptySlots, Order)
+    elseif Mode == 2 then -- Consumable slots
+        local emptySlots = getEmptySlotsForContainer(inventory.Consumables)
+        return processOrder(emptySlots, Order)
+    elseif Mode == 3 then -- Material slots
+        local emptySlots = getEmptySlotsForContainer(inventory.Materials)
+        return processOrder(emptySlots, Order)
+    elseif Mode == 4 then -- All inventory slots
+        local equipEmpty = getEmptySlotsForContainer(inventory.Equipments)
+        local consumEmpty = getEmptySlotsForContainer(inventory.Consumables)
+        local materialEmpty = getEmptySlotsForContainer(inventory.Materials)
+        
+        local hasEmpty = #equipEmpty > 0 or #consumEmpty > 0 or #materialEmpty > 0
+        return hasEmpty, equipEmpty, consumEmpty, materialEmpty
+    elseif Mode == 5 then -- Equipped slots
+        local function getEmptyEquippedSlots(container, isNumbered)
+            local empty = {}
+            if not container then return empty end
+            
+            for _, slot in pairs(container:GetChildren()) do
+                if #slot:GetChildren() == 0 then
+                    if isNumbered then
+                        local _, slotNumber = string.match(slot.Name, STRING_PATTERN)
+                        if slotNumber then
+                            table.insert(empty, slotNumber)
+                        end
+                    else
+                        table.insert(empty, slot.Name)
+                    end
+                end
+            end
+            return empty
+        end
+        
+        return getEmptyEquippedSlots(inventory.MainTab, false),
+               getEmptyEquippedSlots(inventory.AccessoryTab, true),
+               getEmptyEquippedSlots(inventory.FishingTab, true),
+               getEmptyEquippedSlots(inventory.BowTab, true)
+    end
+    
+    return false
 end
-function ItemSlotHandler.UnequipItem(Player,SelectedSlot,IfBank)
-	local Bank = Player:WaitForChild("Bank")
-	local Inventory = Player:WaitForChild("Inventory")
-	local Equipments = Inventory:WaitForChild("Equipments")
-	local Consumables = Inventory:WaitForChild("Consumables")
-	local Materials = Inventory:WaitForChild("Materials")
-	local Equipped = Inventory:WaitForChild("Equipped")
-	local MainTab = Equipped:WaitForChild("Main")
-	local AccessoryTab = Equipped:WaitForChild("Accessory")
-	local IfSuccess,EquipmentSlot,ConsumableSlot,MaterialSlot = ItemSlotHandler.GetEmptySlots(Player,4,"GetLowest")
-	print(IfSuccess, EquipmentSlot)
-	if table.find(EquippedTab,SelectedSlot) then
-		print("E")
-		local Slot = MainTab:FindFirstChild(SelectedSlot)
-		if #Slot:GetChildren() == 1 then
-			local Item = Slot:FindFirstChildOfClass("NumberValue")
-			print(Item)
-			local ItemName,ItemType = ItemDictionaryHandler.IDToName(tonumber(Item.Value))
-			local NewSlot
-			print(type(ItemType))
-			if ItemType == 1 then
-				if type(EquipmentSlot) == "number" and EquipmentSlot > 0 then
-					NewSlot = Equipments:FindFirstChild("Slot_"..EquipmentSlot)
-					Item:SetAttribute("CurrentSlot",EquipmentSlot)
-					Item.Parent = NewSlot
-					return true
-				elseif type(EquipmentSlot) == "table" then
-					if IfBank == true then
-						Item:SetAttribute("CurrentSlot",0)
-						Item.Parent = Bank
-						return true
-					else
-						return false
-					end
-				end
-			elseif ItemType == 2 then
-				if type(ConsumableSlot) == "number" and ConsumableSlot > 0 then
-					NewSlot = Consumables:FindFirstChild("Slot_"..ConsumableSlot)
-					Item:SetAttribute("CurrentSlot",ConsumableSlot)
-					Item.Parent = NewSlot
-					return true
-				elseif type(ConsumableSlot) == "table" then
-					if IfBank == true then
-						Item:SetAttribute("CurrentSlot",0)
-						Item.Parent = Bank
-						return true
-					else
-						return false
-					end
-				end
-			elseif ItemType == 3 then
-				if type(MaterialSlot) == "number" and MaterialSlot > 0 then
-					NewSlot = Materials:FindFirstChild("Slot_"..MaterialSlot)
-					Item:SetAttribute("CurrentSlot",MaterialSlot)
-					Item.Parent = NewSlot
-					return true
-				elseif type(MaterialSlot) == "table" then
-					if IfBank == true then
-						Item:SetAttribute("CurrentSlot",0)
-						Item.Parent = Bank
-						return true
-					else
-						return false
-					end
-				end
-			end
-		elseif #Slot:GetChildren() < 1 then
-			return false, "SelectedSlot is empty"
-		else
-			ItemSlotHandler.CorrectSlotNumber(Player)
-			return false, "SelectedSlot more than 1 items, attempted to correct."
-		end
-	else
-		local Name,Number = string.match(SelectedSlot,StringConverterPattern)
-		if EquippedTab[Name] then
-			local Slot = AccessoryTab:FindFirstChild("AccessorySlot_"..Number)
-			if #Slot:GetChildren() == 1 then
-				local Item = Slot:FindFirstChildOfClass("NumberValue")
-				local ItemName,ItemType = ItemDictionaryHandler.IDToName(Item.Value)
-				local NewSlot
-				if ItemType == 1 then
-					if type(EquipmentSlot) == "number" and EquipmentSlot > 0 then
-						NewSlot = Equipments:FindFirstChild("Slot_"..EquipmentSlot)
-						Item:SetAttribute("CurrentSlot",EquipmentSlot)
-						Item.Parent = NewSlot
-						return true
-					elseif type(EquipmentSlot) == "table" then
-						if IfBank == true then
-							Item:SetAttribute("CurrentSlot",0)
-							Item.Parent = Bank
-							return true
-						else
-							return false
-						end
-					end
-				end
-			elseif #Slot:GetChildren() < 1 then
-				return false,"SelectedSlot is empty"
-			else
-				ItemSlotHandler.CorrectSlotNumber(Player)
-				return false, "SelectedSlot more than 1 items, attempted to correct."
-			end
-		end
-	end
+
+-- Enhanced EquipItem function
+function ItemSlotHandler.EquipItem(Player, SelectedSlot, EquipSlot, IsSwap)
+    if not Player or not Player.Parent then
+        warn("[ItemSlotHandler]: Invalid player in EquipItem")
+        return false, "Invalid player"
+    end
+    
+    local inventory = getPlayerInventory(Player)
+    if not inventory then return false, "Failed to get inventory" end
+    
+    local selectedName, selectedNumber = string.match(SelectedSlot, STRING_PATTERN)
+    local equipSlotName, equipSlotNumber = string.match(EquipSlot, STRING_PATTERN)
+    
+    if not selectedName or not selectedNumber then
+        return false, "Invalid SelectedSlot format"
+    end
+    
+    -- Get source slot
+    local sourceSlot
+    if selectedName == "Equipments" then
+        sourceSlot = inventory.Equipments:FindFirstChild("Slot_" .. selectedNumber)
+    elseif selectedName == "Consumables" then
+        sourceSlot = inventory.Consumables:FindFirstChild("Slot_" .. selectedNumber)
+    else
+        return false, "Invalid source slot type"
+    end
+    
+    if not sourceSlot or #sourceSlot:GetChildren() ~= 1 then
+        return false, "Source slot is empty or contains multiple items"
+    end
+    
+    local item = sourceSlot:GetChildren()[1]
+    if not item or not item.Value then
+        return false, "Invalid item in source slot"
+    end
+    
+    local itemName, itemType, itemSubType = ItemConverter.IDToName(item.Value)
+    if not itemName then
+        return false, "Invalid item ID"
+    end
+    
+    -- Validate equipment compatibility
+    local function canEquipToSlot(subType, targetSlot)
+        if equipSlotName == "Accessory" then
+            return subType == "Accessory"
+        elseif targetSlot == "Weapon" then
+            return table.find(WEAPON_TYPES, subType) ~= nil
+        elseif targetSlot == "Offhand" then
+            return subType == "Longsword" or subType == "Dagger"
+        else
+            return subType == targetSlot
+        end
+    end
+    
+    if not canEquipToSlot(itemSubType, EquipSlot) then
+        return false, "Item cannot be equipped to this slot"
+    end
+    
+    -- Handle equipping
+    local targetSlot
+    if equipSlotName == "Accessory" and equipSlotNumber then
+        targetSlot = inventory.AccessoryTab:FindFirstChild("AccessorySlot_" .. equipSlotNumber)
+    else
+        targetSlot = inventory.MainTab:FindFirstChild(EquipSlot)
+    end
+    
+    if not targetSlot then
+        return false, "Target slot not found"
+    end
+    
+    if #targetSlot:GetChildren() > 0 then
+        if IsSwap then
+            return ItemSlotHandler.SwapSlots(Player, SelectedSlot, EquipSlot)
+        else
+            return false, "Target slot is occupied"
+        end
+    end
+    
+    -- Equip the item
+    item:SetAttribute("CurrentSlot", -1)
+    item.Parent = targetSlot
+    
+    return true, "Item equipped successfully"
 end
-function ItemSlotHandler.SwapSlots(Player,SelectedSlot,NewSlot,AutoEquip)
-	local Bank = Player:WaitForChild("Bank")
-	local Inventory = Player:WaitForChild("Inventory")
-	local Equipments = Inventory:WaitForChild("Equipments")
-	local Consumables = Inventory:WaitForChild("Consumables")
-	local Materials = Inventory:WaitForChild("Materials")
-	local Equipped = Inventory:WaitForChild("Equipped")
-	local MainTab = Equipped:WaitForChild("Main")
-	local AccessoryTab = Equipped:WaitForChild("Accessory")
-	if SelectedSlot == NewSlot then
-		return false, "same???"
-	end
-	local SelectedName, SelectedNumber = string.match(SelectedSlot,StringConverterPattern)
-	local NewName, NewNumber = string.match(NewSlot,StringConverterPattern)
-	print("fired aaaaaaa")
-	if table.find(EquippedTab,SelectedSlot) and SelectedName == nil and SelectedNumber == nil then --Check if 1st slot is Equipped main
-		local Slot1 = MainTab:FindFirstChild(SelectedSlot)
-		if #Slot1:GetChildren() == 1 then
-			local FirstItem = Slot1:FindFirstChildOfClass("NumberValue")
-			local FirstItemName, FirstItemType = ItemDictionaryHandler.IDToName(tonumber(FirstItem.Value))
-			local Slot2
-			if table.find(EquippedTab,NewSlot) and NewName == nil and NewNumber == nil then-- if 2nd slot is equipped main too
-				Slot2 = MainTab:FindFirstChild(NewSlot)
-				if #Slot2:GetChildren() == 1 then
-					local SecondaryItem = Slot2:FindFirstChildOfClass("NumberValue")
-					FirstItem.Parent = Slot2
-					SecondaryItem.Parent = Slot1
-					ItemSlotHandler.CorrectSlotNumber(Player)
-					return true, "Swapped Item!"
-				else
-					return false, "EquippedTab cannot be AutoEquipped"
-				end
-			elseif NewName ~= nil and NewNumber ~= nil then-- if not from equipped then
-				if NewName == "Equipments" then -- Equipments
-					if FirstItemType == 1 then
-						Slot2 = Equipments:FindFirstChild("Slot_"..NewNumber)
-						if #Slot2:GetChildren() == 1 then
-							local SecondaryItem = Slot2:FindFirstChildOfClass("NumberValue")
-							FirstItem.Parent = Slot2
-							SecondaryItem.Parent = Slot1
-							ItemSlotHandler.CorrectSlotNumber(Player)
-							return true, "Swapped Item!"
-						end
-					else
-						return false, "Wrong type"
-					end
-				elseif NewName == "Consumables" then -- Equipments
-					print("test aaa")
-					if FirstItemType == 2 then
-						Slot2 = Consumables:FindFirstChild("Slot_"..NewNumber)
-						if #Slot2:GetChildren() == 1 then
-							local SecondaryItem = Slot2:FindFirstChildOfClass("NumberValue")
-							FirstItem.Parent = Slot2
-							SecondaryItem.Parent = Slot1
-							ItemSlotHandler.CorrectSlotNumber(Player)
-							return true, "Swapped Item!"
-						end
-					else
-						return false, "Wrong type"
-					end
-				else
-					return false, "Wrong catagory on 2nd slot?"
-				end
 
-			end
-			--elseif #Slot1:GetChildren() < 1 then
-			--Unequip or Equip
-		else
-			ItemSlotHandler.CorrectSlotNumber(Player)
-			return false, "more or less than 1 item in selected slot?"
-		end
-	elseif EquippedTab[SelectedName] and SelectedName ~= nil and SelectedNumber ~= nil  then -- if 1st slot from accessory
-		local Slot1 = AccessoryTab:FindFirstChild("AccessorySlot_"..SelectedNumber)
-		if #Slot1:GetChildren() == 1 then
-			local FirstItem = Slot1:FindFirstChildOfClass("NumberValue")
-			local FirstItemName, FirstItemType = ItemDictionaryHandler.IDToName(tonumber(FirstItem.Value))
-			local Slot2
-			if EquippedTab[NewName] and NewName ~= nil and NewNumber ~= nil then
-				Slot2 = AccessoryTab:FindFirstChild("AccessorySlot_"..NewNumber)
-				if #Slot2:GetChildren() == 1 then
-					local SecondaryItem = Slot2:FindFirstChildOfClass("NumberValue")
-					FirstItem.Parent = Slot2
-					SecondaryItem.Parent = Slot1
-					ItemSlotHandler.CorrectSlotNumber(Player)
-					return true, "Swapped Item!"
-				elseif #Slot2:GetChildren() > 1 then
-					ItemSlotHandler.CorrectSlotNumber(Player)
-					return false, "NewSlot is occupied, attempted to correctslots"
-				elseif #Slot2:GetChildren() < 1 then
-					return false, "NewSlot is empty"
-				end
-			elseif NewName == "Equipments" then
-				if FirstItemType == 1 then
-					Slot2 = Equipments:FindFirstChild("Slot_"..NewNumber)
-					if #Slot2:GetChildren() == 1 then
-						local SecondaryItem = Slot2:FindFirstChildOfClass("NumberValue")
-						FirstItem.Parent = Slot2
-						SecondaryItem.Parent = Slot1
-						ItemSlotHandler.CorrectSlotNumber(Player)
-						return true,"Swapped Item!"
-					elseif #Slot2:GetChildren() < 1 then
-						local IfSuccess, Error = ItemSlotHandler.UnequipItem(Player,Slot1,false)
-						if IfSuccess then
-							return true, "Swapped Item!"
-						else
-							return false, Error
-						end
-					end
-				else
-					return false, "Wrong type"
-				end
-			else
-				return false, "NewSlot is inappropriate"
-			end
-		else
-			return false, "more or less thant 1 item in select slot?"
-		end
-	elseif SelectedName == "Equipments" then
-		local Slot1 = Equipments:FindFirstChild("Slot_"..SelectedNumber)
-		if #Slot1:GetChildren() == 1 then
-			local FirstItem = Slot1:FindFirstChildOfClass("NumberValue")
-			local FirstItemName, FirstItemType = ItemDictionaryHandler.IDToName(tonumber(FirstItem.Value))
-			local Slot2
-			if table.find(EquippedTab,NewSlot) and NewName == nil and NewNumber == nil then
-				Slot2 = MainTab:FindFirstChild(NewSlot)
-				if #Slot2:GetChildren() == 1 then
-					local SecondaryItem = Slot2:FindFirstChildOfClass("NumberValue")
-					FirstItem.Parent = Slot2
-					SecondaryItem.Parent = Slot1
-					ItemSlotHandler.CorrectSlotNumber(Player)
-					return true, "Swapped Item!"
-				else
-					return false, "EquippedTab cannot be AutoEquipped"
-				end
-			elseif NewName == "Accessory" and NewNumber ~= nil then
-				Slot2 = AccessoryTab:FindFirstChild("AccessorySlot_"..NewNumber)
-				print(Slot1)
-				print(Slot2)
-				if #Slot2:GetChildren() == 1 then
-					local SecondaryItem = Slot2:FindFirstChildOfClass("NumberValue")
-					FirstItem.Parent = Slot2
-					SecondaryItem.Parent = Slot1
-					--ItemSlotHandler.CorrectSlotNumber(Player)
-					return true, "Swapped Item!"
-				elseif #Slot2:GetChildren() > 1 then
-					ItemSlotHandler.CorrectSlotNumber(Player)
-					return false, "NewSlot is occupied, attempted to correctslots"
-				elseif #Slot2:GetChildren() < 1 then
-					--EquipItem() once i reworked it
-
-
-					return false, "NewSlot is empty"
-				end
-			elseif NewName ~= nil and NewNumber ~= nil then
-				if NewName == "Equipments" then
-					if FirstItemType == 1 then
-						Slot2 = Equipments:FindFirstChild("Slot_"..NewNumber)
-						if #Slot2:GetChildren() == 1 then
-							local SecondaryItem = Slot2:FindFirstChildOfClass("NumberValue")
-							FirstItem.Parent = Slot2
-							SecondaryItem.Parent = Slot1
-							ItemSlotHandler.CorrectSlotNumber(Player)
-							return true, "Swapped Item!"
-						end
-					else
-						return false, "Wrong type"
-					end
-				else
-					return false, "Wrong catagory on 2nd slot?"
-				end
-
-			end
-			--elseif SelectedName == "Equipments" then
-			--	local Slot1 = Equipments:FindFirstChild("Slot_"..SelectedNumber)
-			--	if #Slot1:GetChildren() == 1 then
-			--		local FirstItem = Slot1:FindFirstChildOfClass("NumberValue")
-			--		local FirstItemName, FirstItemType = ItemDictionaryHandler.IDToName(tonumber(FirstItem.Value))
-			--		local Slot2
-			--		if table.find(EquippedTab,NewSlot) and NewName == nil and NewNumber == nil then
-			--			Slot2 = MainTab:FindFirstChild(NewSlot)
-			--			if #Slot2:GetChildren() == 1 then
-			--				local SecondaryItem = Slot2:FindFirstChildOfClass("NumberValue")
-			--				FirstItem.Parent = Slot2
-			--				SecondaryItem.Parent = Slot1
-			--				ItemSlotHandler.CorrectSlotNumber(Player)
-			--				return true
-			--			else
-			--				return false, "EquippedTab cannot be AutoEquipped"
-			--			end
-			--		elseif EquippedTab[NewName] and NewName ~= nil and NewNumber ~= nil then
-			--			Slot2 = AccessoryTab:FindFirstChild("AccessorySlot_"..NewNumber)
-			--			if #Slot2:GetChildren() == 1 then
-			--				local SecondaryItem = Slot2:FindFirstChildOfClass("NumberValue")
-			--				FirstItem.Parent = Slot2
-			--				SecondaryItem.Parent = Slot1
-			--				ItemSlotHandler.CorrectSlotNumber(Player)
-			--				return true
-			--			elseif #Slot2:GetChildren() > 1 then
-			--				ItemSlotHandler.CorrectSlotNumber(Player)
-			--				return false, "NewSlot is occupied, attempted to correctslots"
-			--			elseif #Slot2:GetChildren() < 1 then
-			--				--EquipItem() once i reworked it
-
-
-			--				return false, "NewSlot is empty"
-			--			end
-			--		elseif NewName ~= nil and NewNumber ~= nil then
-			--			if NewName == "Equipments" then
-			--				if FirstItemType == 1 then
-			--					Slot2 = Equipments:FindFirstChild("Slot_"..NewNumber)
-			--					if #Slot2:GetChildren() == 1 then
-			--						local SecondaryItem = Slot2:FindFirstChildOfClass("NumberValue")
-			--						FirstItem.Parent = Slot2
-			--						SecondaryItem.Parent = Slot1
-			--						ItemSlotHandler.CorrectSlotNumber(Player)
-			--						return true
-			--					end
-			--				else
-			--					return false, "Wrong type"
-			--				end
-			--			else
-			--				return false, "Wrong catagory on 2nd slot?"
-			--			end
-		end
-
-	elseif SelectedName == "Consumables" then
-		print("test aaa")
-		local Slot1 = Consumables:FindFirstChild("Slot_"..SelectedNumber)
-		if #Slot1:GetChildren() == 1 then
-			local FirstItem = Slot1:FindFirstChildOfClass("NumberValue")
-			local FirstItemName, FirstItemType = ItemDictionaryHandler.IDToName(tonumber(FirstItem.Value))
-			print(FirstItemType)
-			local Slot2
-			if table.find(EquippedTab,NewSlot) and NewName == nil and NewNumber == nil then
-				Slot2 = MainTab:FindFirstChild(NewSlot)
-				if #Slot2:GetChildren() == 1 then
-					local SecondaryItem = Slot2:FindFirstChildOfClass("NumberValue")
-					FirstItem.Parent = Slot2
-					SecondaryItem.Parent = Slot1
-					ItemSlotHandler.CorrectSlotNumber(Player)
-					return true, "Swapped Item!"
-				else
-					return false, "EquippedTab cannot be AutoEquipped"
-				end
-			elseif NewName ~= nil and NewNumber ~= nil then
-				if NewName == "Consumables" then
-					if FirstItemType == 2 then
-						Slot2 = Consumables:FindFirstChild("Slot_"..NewNumber)
-						if #Slot2:GetChildren() == 1 then
-							local SecondaryItem = Slot2:FindFirstChildOfClass("NumberValue")
-							FirstItem.Parent = Slot2
-							SecondaryItem.Parent = Slot1
-							ItemSlotHandler.CorrectSlotNumber(Player)
-							return true, "Swapped Item!"
-						end
-					else
-						return false, "Wrong type"
-					end
-				else
-					return false, "Wrong catagory on 2nd slot?"
-				end
-			end
-		end 
-	elseif SelectedName == "Materials" then
-		local Slot1 = Materials:FindFirstChild("Slot_"..SelectedNumber)
-		if #Slot1:GetChildren() == 1 then
-			local FirstItem = Slot1:FindFirstChildOfClass("NumberValue")
-			local FirstItemName, FirstItemType = ItemDictionaryHandler.IDToName(tonumber(FirstItem.Value))
-			local Slot2
-			if NewName ~= nil and NewNumber ~= nil then
-				if NewName == "Materials" then
-					if FirstItemType == 3 then
-						Slot2 = Materials:FindFirstChild("Slot_"..NewNumber)
-						if #Slot2:GetChildren() == 1 then
-							local SecondaryItem = Slot2:FindFirstChildOfClass("NumberValue")
-							FirstItem.Parent = Slot2
-							SecondaryItem.Parent = Slot1
-							ItemSlotHandler.CorrectSlotNumber(Player)
-							return true, "Swapped Item!"
-						end
-					else
-						return false, "Wrong type"
-					end
-				else
-					return false, "Wrong catagory on 2nd slot?"
-				end
-			end
-		end 
-	end
+-- Enhanced UnequipItem function
+function ItemSlotHandler.UnequipItem(Player, SelectedSlot, IfBank)
+    if not Player or not Player.Parent then
+        warn("[ItemSlotHandler]: Invalid player in UnequipItem")
+        return false, "Invalid player"
+    end
+    
+    local inventory = getPlayerInventory(Player)
+    if not inventory then return false, "Failed to get inventory" end
+    
+    local sourceSlot
+    if table.find(EQUIPPED_TABS, SelectedSlot) then
+        sourceSlot = inventory.MainTab:FindFirstChild(SelectedSlot)
+    else
+        local _, slotNumber = string.match(SelectedSlot, STRING_PATTERN)
+        if slotNumber then
+            sourceSlot = inventory.AccessoryTab:FindFirstChild("AccessorySlot_" .. slotNumber)
+        end
+    end
+    
+    if not sourceSlot or #sourceSlot:GetChildren() ~= 1 then
+        return false, "Invalid source slot or empty"
+    end
+    
+    local item = sourceSlot:GetChildren()[1]
+    if not item or not item.Value then
+        return false, "Invalid item in source slot"
+    end
+    
+    local _, itemType = ItemConverter.IDToName(item.Value)
+    if not itemType then
+        return false, "Invalid item ID"
+    end
+    
+    -- Find empty slot in appropriate inventory
+    local success, emptySlot = ItemSlotHandler.GetEmptySlots(Player, itemType, "GetLowest")
+    
+    if success and type(emptySlot) == "number" then
+        local targetContainer = itemType == ITEM_TYPES.EQUIPMENT and inventory.Equipments
+            or itemType == ITEM_TYPES.CONSUMABLE and inventory.Consumables
+            or inventory.Materials
+        
+        local targetSlot = targetContainer:FindFirstChild("Slot_" .. emptySlot)
+        if targetSlot then
+            item:SetAttribute("CurrentSlot", emptySlot)
+            item.Parent = targetSlot
+            return true, "Item unequipped successfully"
+        end
+    elseif IfBank then
+        item:SetAttribute("CurrentSlot", 0)
+        item.Parent = inventory.Bank
+        return true, "Item moved to bank"
+    end
+    
+    return false, "No empty slots available"
 end
-function ItemSlotHandler.SplitSlot(Player,SelectedSlot,Amounts)
-	--local Bank = Player:WaitForChild("Bank")
-	local Inventory = Player:WaitForChild("Inventory")
-	local Type 
-	local SelectedInventory 
-	local SelectedName, SelectedNumber = string.match(SelectedSlot,StringConverterPattern)
-	if SelectedName == "Consumables" then
-		Type = 2
-		SelectedInventory = Inventory:FindFirstChild("Consumables")
-	elseif SelectedName == "Materials" then
-		Type = 3
-		SelectedInventory = Inventory:FindFirstChild("Materials")
-	else return false,"Wrong Type?"
-	end
-	local itemdata = SelectedInventory:FindFirstChild("Slot_"..SelectedNumber):FindFirstChildOfClass("NumberValue")
-	local ServerItemData = require(ItemStogare:FindFirstChild(SelectedName):FindFirstChild(itemdata.Name))
-	if ServerItemData.Stackable == false then return false,"This item is singularcell" end
-	local IsEmpty, EmptySlots = ItemSlotHandler.GetEmptySlots(Player,Type,"GetLowest")
-	print(IsEmpty)
-	print(type(EmptySlots))
-	if IsEmpty == false then return false,"Inv fulled" end
-	if itemdata:GetAttribute("Amounts") <= Amounts then return false,"Too many split request" end
-	local newitem = ItemDictionaryHandler.ItemToDictionary(itemdata)
-	newitem.Amounts = Amounts
-	newitem.CurrentSlot = tonumber(EmptySlots)
-	itemdata:SetAttribute("Amounts",itemdata:GetAttribute("Amounts") - Amounts)
-	ItemSlotHandler.MoveToSlot(Player,newitem)
-	return true, "Splitted Item!"
+
+-- Enhanced SwapSlots function with better error handling
+function ItemSlotHandler.SwapSlots(Player, SelectedSlot, NewSlot)
+    if not Player or not Player.Parent then
+        warn("[ItemSlotHandler]: Invalid player in SwapSlots")
+        return false, "Invalid player"
+    end
+    
+    local inventory = getPlayerInventory(Player)
+    if not inventory then return false, "Failed to get inventory" end
+    
+    if SelectedSlot == NewSlot then
+        return false, "Cannot swap slot with itself"
+    end
+    
+    -- Helper function to get slot reference
+    local function getSlotReference(slotName)
+        local name, number = string.match(slotName, STRING_PATTERN)
+        
+        if table.find(EQUIPPED_TABS, slotName) then
+            return inventory.MainTab:FindFirstChild(slotName)
+        elseif name == "Accessory" and number then
+            return inventory.AccessoryTab:FindFirstChild("AccessorySlot_" .. number)
+        elseif name == "Equipments" and number then
+            return inventory.Equipments:FindFirstChild("Slot_" .. number)
+        elseif name == "Consumables" and number then
+            return inventory.Consumables:FindFirstChild("Slot_" .. number)
+        elseif name == "Materials" and number then
+            return inventory.Materials:FindFirstChild("Slot_" .. number)
+        end
+        
+        return nil
+    end
+    
+    local slot1 = getSlotReference(SelectedSlot)
+    local slot2 = getSlotReference(NewSlot)
+    
+    if not slot1 or not slot2 then
+        return false, "Invalid slot reference"
+    end
+    
+    if #slot1:GetChildren() ~= 1 or #slot2:GetChildren() ~= 1 then
+        return false, "Both slots must contain exactly one item"
+    end
+    
+    local item1 = slot1:GetChildren()[1]
+    local item2 = slot2:GetChildren()[1]
+    
+    -- Perform the swap
+    item1.Parent = slot2
+    item2.Parent = slot1
+    
+    -- Update slot attributes if needed
+    ItemSlotHandler.CorrectSlotNumber(Player)
+    
+    return true, "Items swapped successfully"
 end
-function ItemSlotHandler.MoveItem(Player,SelectedSlot,NewSlot)
-	--local Bank = Player:WaitForChild("Bank")
-	local Inventory = Player:WaitForChild("Inventory")
-	local SelectedName, SelectedNumber = string.match(SelectedSlot,StringConverterPattern)
-	local NewName, NewNumber = string.match(NewSlot,StringConverterPattern)
-	if SelectedName ~= NewName then return false,"Wrong inv type" end
-	local SelectedInventory = Inventory:FindFirstChild(SelectedName)
-	if SelectedInventory:FindFirstChild("Slot_"..SelectedNumber):FindFirstChildOfClass("NumberValue") == nil then return false, "Cannot Find Item" end
-	local itemdata = SelectedInventory:FindFirstChild("Slot_"..SelectedNumber):FindFirstChildOfClass("NumberValue")
-	if #SelectedInventory:FindFirstChild("Slot_"..NewNumber):GetChildren() == 1 then
-		local a,b = ItemSlotHandler.SwapSlots(Player,SelectedSlot,NewSlot)
-		print(b)
-		return a,b
-	else
-		itemdata:SetAttribute("CurrentSlot",tonumber(NewNumber))
-		itemdata.Parent = SelectedInventory:FindFirstChild("Slot_"..NewNumber)
-		return true,"Moved Item"
-	end
+
+-- Enhanced SplitSlot function
+function ItemSlotHandler.SplitSlot(Player, SelectedSlot, Amounts)
+    if not Player or not Player.Parent then
+        warn("[ItemSlotHandler]: Invalid player in SplitSlot")
+        return false, "Invalid player"
+    end
+    
+    local inventory = getPlayerInventory(Player)
+    if not inventory then return false, "Failed to get inventory" end
+    
+    local selectedName, selectedNumber = string.match(SelectedSlot, STRING_PATTERN)
+    local itemType = selectedName == "Consumables" and ITEM_TYPES.CONSUMABLE
+        or selectedName == "Materials" and ITEM_TYPES.MATERIAL
+        or nil
+    
+    if not itemType then
+        return false, "Invalid slot type for splitting"
+    end
+    
+    local container = itemType == ITEM_TYPES.CONSUMABLE and inventory.Consumables or inventory.Materials
+    local sourceSlot = container:FindFirstChild("Slot_" .. selectedNumber)
+    
+    if not sourceSlot or #sourceSlot:GetChildren() ~= 1 then
+        return false, "Invalid source slot"
+    end
+    
+    local item = sourceSlot:GetChildren()[1]
+    if not item or not item.Name then
+        return false, "Invalid item in source slot"
+    end
+    
+    local itemContainer = StorageContainers[itemType]
+    local itemModule = itemContainer and itemContainer:FindFirstChild(item.Name)
+    
+    if not itemModule then
+        return false, "Item data not found"
+    end
+    
+    local success, serverItemData = pcall(require, itemModule)
+    if not success or not serverItemData then
+        return false, "Failed to load item data"
+    end
+    
+    if not serverItemData.Stackable then
+        return false, "Item is not stackable"
+    end
+    
+    local currentAmounts = item:GetAttribute("Amounts") or 1
+    if currentAmounts <= Amounts then
+        return false, "Cannot split more than current amount"
+    end
+    
+    local hasEmpty, emptySlot = ItemSlotHandler.GetEmptySlots(Player, itemType, "GetLowest")
+    if not hasEmpty then
+        return false, "No empty slots available"
+    end
+    
+    -- Create new item dictionary for split
+    local convertSuccess, newItem = pcall(ItemConverter.ItemToDictionary, item)
+    if not convertSuccess or not newItem then
+        return false, "Failed to convert item to dictionary"
+    end
+    
+    newItem.Amounts = Amounts
+    newItem.CurrentSlot = emptySlot
+    
+    -- Update original item
+    item:SetAttribute("Amounts", currentAmounts - Amounts)
+    
+    -- Move new item to empty slot
+    local moveSuccess = ItemSlotHandler.MoveToSlot(Player, newItem)
+    if not moveSuccess then
+        return false, "Failed to move split item"
+    end
+    
+    return true, "Item split successfully"
 end
+
+-- Enhanced MoveItem function
+function ItemSlotHandler.MoveItem(Player, SelectedSlot, NewSlot)
+    if not Player or not Player.Parent then
+        warn("[ItemSlotHandler]: Invalid player in MoveItem")
+        return false, "Invalid player"
+    end
+    
+    local inventory = getPlayerInventory(Player)
+    if not inventory then return false, "Failed to get inventory" end
+    
+    local selectedName, selectedNumber = string.match(SelectedSlot, STRING_PATTERN)
+    local newName, newNumber = string.match(NewSlot, STRING_PATTERN)
+    
+    if not selectedName or not selectedNumber or not newName or not newNumber then
+        return false, "Invalid slot format"
+    end
+    
+    if selectedName ~= newName then
+        return false, "Cannot move between different inventory types"
+    end
+    
+    local container = inventory[selectedName]
+    if not container then
+        return false, "Invalid container"
+    end
+    
+    local sourceSlot = container:FindFirstChild("Slot_" .. selectedNumber)
+    local targetSlot = container:FindFirstChild("Slot_" .. newNumber)
+    
+    if not sourceSlot or not targetSlot then
+        return false, "Invalid slot reference"
+    end
+    
+    local sourceItem = sourceSlot:FindFirstChildOfClass("NumberValue")
+    if not sourceItem then
+        return false, "No item found in source slot"
+    end
+    
+    if #targetSlot:GetChildren() == 1 then
+        -- Swap items
+        return ItemSlotHandler.SwapSlots(Player, SelectedSlot, NewSlot)
+    elseif #targetSlot:GetChildren() == 0 then
+        -- Move to empty slot
+        sourceItem:SetAttribute("CurrentSlot", tonumber(newNumber))
+        sourceItem.Parent = targetSlot
+        return true, "Item moved successfully"
+    else
+        return false, "Target slot contains multiple items"
+    end
+end
+
 return ItemSlotHandler
